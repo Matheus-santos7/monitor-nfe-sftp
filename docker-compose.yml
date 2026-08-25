@@ -1,0 +1,179 @@
+# n8n + PostgreSQL + monitor SFTP NF-e
+# Uso: docker compose up -d --build
+# UI:  http://localhost:5678
+# Monitor: POST http://localhost:8081/executar
+#
+# Máquina:   docker compose up -d
+#            http://localhost:5678
+#
+# Servidor:  ajuste o .env (HTTPS + domínio) e, se for usar Traefik:
+#            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Pare o `npx n8n` (porta 5678) antes de subir.
+
+name: n8n
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: n8n-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_NON_ROOT_USER: ${POSTGRES_NON_ROOT_USER}
+      POSTGRES_NON_ROOT_PASSWORD: ${POSTGRES_NON_ROOT_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    attach: false
+    command:
+      - postgres
+      - -c
+      - log_min_messages=fatal
+      - -c
+      - log_checkpoints=off
+      - -c
+      - log_connections=off
+      - -c
+      - log_disconnections=off
+    networks:
+      - n8n
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      TZ: ${TZ}
+
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-error}
+      N8N_LOG_OUTPUT: console
+      CODE_ENABLE_STDOUT: "true"
+      NO_COLOR: "1"
+      NODE_NO_WARNINGS: "1"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_HIRING_BANNER_ENABLED: "false"
+      N8N_TEMPLATES_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL}
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL}
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE}
+      N8N_PROXY_HOPS: ${N8N_PROXY_HOPS:-0}
+
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_NON_ROOT_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_NON_ROOT_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: n8n
+
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 336
+      N8N_RESTRICT_FILE_ACCESS_TO: /files
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+
+      GOOGLE_CHAT_WEBHOOK_URL: ${GOOGLE_CHAT_WEBHOOK_URL:-}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      WHATSAPP_TO: ${WHATSAPP_TO:-}
+
+      MONITOR_HTTP_TOKEN: ${MONITOR_HTTP_TOKEN:-}
+
+      ML_ACCESS_TOKEN: ${ML_ACCESS_TOKEN:-}
+      ML_REFRESH_TOKEN: ${ML_REFRESH_TOKEN:-}
+      ML_CLIENT_ID: ${ML_CLIENT_ID:-}
+      ML_CLIENT_SECRET: ${ML_CLIENT_SECRET:-}
+      FAKE_NOTA: ${FAKE_NOTA:-}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+      - ./workflows:/files/workflows:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - n8n
+
+  monitor-sftp:
+    build: ./monitoramento
+    container_name: n8n-monitor-sftp
+    restart: unless-stopped
+    environment:
+      CONFIG_PATH: /app/config.yml
+      PORT: "8080"
+      TZ: ${TZ}
+      MONITOR_HTTP_TOKEN: ${MONITOR_HTTP_TOKEN:-}
+      FAKE_NOTA: ${FAKE_NOTA:-}
+      ML_ACCESS_TOKEN: ${ML_ACCESS_TOKEN:-}
+      ML_REFRESH_TOKEN: ${ML_REFRESH_TOKEN:-}
+      ML_CLIENT_ID: ${ML_CLIENT_ID:-}
+      ML_CLIENT_SECRET: ${ML_CLIENT_SECRET:-}
+      ML_USER_ID: ${ML_USER_ID:-}
+      ML_APPLICATION_ID: ${ML_CLIENT_ID:-}
+      ML_TETO_DIAS: ${ML_TETO_DIAS:-1}
+      ML_TOKENS_PATH: /app/data/ml-tokens.json
+      ML_ENV_PATH: /app/.env.host
+      NERUS_TENANT_ID: ${NERUS_TENANT_ID:-}
+      NERUS_SSH_HOST: ${NERUS_SSH_HOST:-}
+      NERUS_SSH_PORT: ${NERUS_SSH_PORT:-22}
+      NERUS_SSH_USER: ${NERUS_SSH_USER:-}
+      NERUS_SSH_KEY: /run/secrets/bastion.pem
+      NERUS_DB_HOST: ${NERUS_DB_HOST:-}
+      NERUS_DB_PORT: ${NERUS_DB_PORT:-3306}
+      NERUS_DB_USER: ${NERUS_DB_USER:-}
+      NERUS_DB_PASSWORD: ${NERUS_DB_PASSWORD:-}
+      NERUS_AUTH_URL: ${NERUS_AUTH_URL:-}
+      NERUS_USERNAME: ${NERUS_USERNAME:-}
+      NERUS_PASSWORD: ${NERUS_PASSWORD:-}
+      NERUS_NOTIFICATION_URL: ${NERUS_NOTIFICATION_URL:-}
+    volumes:
+      - ./monitoramento/config.yml:/app/config.yml:ro
+      - ./monitoramento/data:/app/data
+      - ./.env:/app/.env.host
+      - ${NERUS_SSH_KEY_HOST_PATH:-./secrets/bastion.pem}:/run/secrets/bastion.pem:ro
+    ports:
+      - "127.0.0.1:8081:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - n8n
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  n8n:
+    driver: bridge

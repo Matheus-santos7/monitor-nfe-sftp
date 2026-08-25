@@ -1,0 +1,1097 @@
+{
+  "id": "monSftpNfe000001",
+  "name": "1. Monitor SFTP NF-e",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Executar agora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8,12,15,17 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000043",
+      "name": "Agendar checagem",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://monitor-sftp:8080/executar",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "notify",
+              "value": "false"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MONITOR_HTTP_TOKEN }}"
+            }
+          ]
+        },
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Checar FTP e teto ML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`▶ Montar resumo da checagem  integração=${$json.integracaoOk}  furos=${($json.notasAusentes || []).length}`);\nfunction parseFakeNota(raw) {\n  const v = String(raw ?? '').trim();\n  if (!v || /^(0|false|off|no|desligada|disabled)$/i.test(v)) return null;\n  const m = v.match(/^(\\d+)\\s*[\\/,;x-]\\s*(\\d+)$/i);\n  if (!m) return null;\n  return { numero: Number(m[1]), serie: Number(m[2]) };\n}\n\nfunction horarioSaoPaulo() {\n  return new Intl.DateTimeFormat('pt-BR', {\n    timeZone: 'America/Sao_Paulo',\n    day: '2-digit',\n    month: '2-digit',\n    year: 'numeric',\n    hour: '2-digit',\n    minute: '2-digit',\n    hour12: false,\n  }).format(new Date());\n}\n\nconst MAX_DIAGNOSTICOS = 5;\nconst sftp = $input.first().json;\nconst executionId = $execution.id;\nconst horario = horarioSaoPaulo();\n\nif (sftp.ok === false || sftp.erro) {\n  throw new Error(`Checar SFTP falhou: ${sftp.erro || 'resposta inválida'}`);\n}\n\nconst series = Array.isArray(sftp.series) ? sftp.series : [];\nlet notasAusentes = Array.isArray(sftp.notasAusentes) ? [...sftp.notasAusentes] : [];\nlet integracaoOk = series.length > 0 && series.every((s) => s.totalAusentes === 0);\n\nconst fake = parseFakeNota($env.FAKE_NOTA);\nif (fake) {\n  if (!notasAusentes.some((n) => n.numero === fake.numero && n.serie === fake.serie)) {\n    notasAusentes = [fake, ...notasAusentes];\n  }\n  integracaoOk = false;\n}\n\nconst identificador = sftp.identificador || '';\nconst periodo = sftp.tetoPeriodo\n  ? (sftp.tetoPeriodo.start === sftp.tetoPeriodo.end\n      ? `Período teto ML: ${sftp.tetoPeriodo.start}`\n      : `Período teto ML: ${sftp.tetoPeriodo.start}–${sftp.tetoPeriodo.end}`)\n  : '';\nconst seriesLinha = series\n  .map((s) => {\n    const teto = s.tetoMl != null ? `, teto ML ${s.tetoMl} ` : '';\n    return `série ${s.serie} (FTP ${s.min} → ${s.max}${teto})`;\n  })\n  .join('\\n');\n\nconst cabecalho = [identificador, periodo, seriesLinha].filter(Boolean).join('\\n');\nconst prefixoTeste = fake ? `[TESTE FAKE_NOTA] ` : '';\n\nconst mensagemOk =\n  `${prefixoTeste}Monitoramento concluído ${horario}\\n\\n` +\n  'A integração de NF-e das séries monitoradas está 100% OK.\\n' +\n  'A última NF emitida pelo Mercado Livre está no FTP.\\n\\n' +\n  cabecalho;\n\nconst listaNotas = notasAusentes\n  .slice(0, 20)\n  .map((n) => `${n.numero}/${n.serie}`)\n  .join(', ');\n\nconst excedente =\n  notasAusentes.length > MAX_DIAGNOSTICOS\n    ? `\\n\\nDiagnóstico automático nas ${MAX_DIAGNOSTICOS} primeiras; ${notasAusentes.length - MAX_DIAGNOSTICOS} ficam para o próximo ciclo.`\n    : '';\n\nconst mensagemErro =\n  `${prefixoTeste}Monitoramento com pendências ${horario}\\n\\n` +\n  cabecalho +\n  (listaNotas ? `\\n\\nNotas ausentes no FTP: ${listaNotas}` : '') +\n  excedente;\n\ntry {\n  $execution.customData.set('executionId', String(executionId));\n  $execution.customData.set('integracaoOk', String(integracaoOk));\n  $execution.customData.set('furos', String(notasAusentes.length));\n} catch (e) {}\n\nreturn [\n  {\n    json: {\n      identificador,\n      series,\n      tetoPeriodo: sftp.tetoPeriodo || null,\n      integracaoOk,\n      notasAusentes,\n      fakeNota: fake,\n      executionId,\n      assunto: prefixoTeste + (integracaoOk\n        ? `Monitoramento concluído ${horario}`\n        : `Monitoramento com pendências ${horario}`),\n      mensagem: integracaoOk ? mensagemOk : mensagemErro,\n    },\n  },\n];\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Montar resumo da checagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-integracao-ok",
+              "leftValue": "={{ $json.integracaoOk }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000004",
+      "name": "Integração OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.GOOGLE_CHAT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.mensagem }) }}",
+        "options": {},
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000005",
+      "name": "Avisar Google Chat (OK)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.ALERT_EMAIL_FROM }}",
+        "toEmail": "={{ $env.ALERT_EMAIL_TO }}",
+        "subject": "={{ $json.assunto }}",
+        "emailFormat": "text",
+        "text": "={{ $json.mensagem }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000006",
+      "name": "Avisar e-mail (OK)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        280
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $env.WHATSAPP_TO, text: $json.mensagem }) }}",
+        "options": {},
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000007",
+      "name": "Avisar WhatsApp (OK)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        480
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "http://monitor-sftp:8080/ml/me",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MONITOR_HTTP_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000011",
+      "name": "Validar token Mercado Livre",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`▶ Separar NFs ausentes  ${$json.referencia || $json.motivo || ''}`);\nconst MAX_FUROS = 5;\nconst seller = $input.first().json;\nconst avaliacao = $('Montar resumo da checagem').first().json;\nconst mlUserId = seller.id || $env.ML_USER_ID;\nconst executionId = avaliacao.executionId || $execution.id;\n\nif (!mlUserId) {\n  throw new Error('GET /users/me não retornou id. Token inválido ou expirado.');\n}\n\nconst notas = Array.isArray(avaliacao.notasAusentes) ? avaliacao.notasAusentes : [];\nif (notas.length === 0) {\n  return [{\n    json: {\n      motivo: 'serie_sem_xml_ou_sem_furo_listavel',\n      mlUserId,\n      identificador: avaliacao.identificador,\n      executionId,\n      furosTotais: 0,\n      furosProcessados: 0,\n    },\n  }];\n}\n\nconst selecionadas = notas.slice(0, MAX_FUROS);\nreturn selecionadas.map((n) => ({\n  json: {\n    numero: n.numero,\n    serie: n.serie,\n    referencia: `${n.numero}/${n.serie}`,\n    motivo: 'xml_ausente_ftp',\n    mlUserId,\n    identificador: avaliacao.identificador,\n    executionId,\n    furosTotais: notas.length,\n    furosProcessados: selecionadas.length,\n  },\n}));\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000012",
+      "name": "Separar NFs ausentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-tem-numero",
+              "leftValue": "={{ $json.numero }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000013",
+      "name": "Há NF para cruzar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1620,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://monitor-sftp:8080/ml/invoice",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "numero",
+              "value": "={{ $json.numero }}"
+            },
+            {
+              "name": "serie",
+              "value": "={{ $json.serie }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MONITOR_HTTP_TOKEN }}"
+            }
+          ]
+        },
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000014",
+      "name": "Localizar invoice no ZIP do ML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1880,
+        620
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`▶ Normalizar invoice  ${$json.referencia}  encontrado=${$json.encontrado}`);\nconst origem = $('Separar NFs ausentes').item.json;\nconst rel = $input.first().json;\nconst falhou = Boolean(rel.error || rel.erro || rel.ok === false);\nconst invoiceId = falhou ? null : (rel.invoiceId ?? null);\n\nreturn [{\n  json: {\n    referencia: origem.referencia,\n    numero: origem.numero,\n    serie: origem.serie,\n    invoiceId,\n    chave: falhou ? null : (rel.chave ?? null),\n    xmlNome: rel.xmlNome ?? null,\n    periodo: rel.periodo ?? null,\n    tentativas: rel.tentativas ?? null,\n    encontrado: Boolean(!falhou && rel.encontrado && invoiceId),\n    motivo: falhou\n      ? (rel.erro || rel.error?.message || 'falha_http_buscar_invoice')\n      : (rel.encontrado && invoiceId\n        ? 'xml_ausente_ftp'\n        : (rel.erro || 'invoice_nao_encontrada_no_relatorio_ml')),\n    identificador: origem.identificador,\n    executionId: origem.executionId,\n    mlUserId: origem.mlUserId,\n  },\n}];\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000015",
+      "name": "Normalizar invoice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`▶ Série sem XML para cruzar  ${$json.identificador || ''}`);\nconst origem = $input.first().json;\nconst executionId = origem.executionId || $execution.id;\nconst mensagem =\n  `🔎 Diagnóstico ${origem.referencia || origem.identificador || ''}\\n\\n` +\n  `Onde está o problema: série sem XML listável para cruzar com o Mercado Livre.\\n` +\n  `motivo=${origem.motivo || 'serie_sem_xml_ou_sem_furo_listavel'}\\n` +\n  `execução n8n=${executionId}`;\n\nreturn [{\n  json: {\n    encontrado: false,\n    precisaAdmin: true,\n    proximaAcao: 'nenhuma',\n    motivo: origem.motivo || 'serie_sem_xml_ou_sem_furo_listavel',\n    identificador: origem.identificador,\n    mlUserId: origem.mlUserId,\n    executionId,\n    assunto: `NF-e ${origem.identificador || ''} — série sem XML para cruzar`,\n    mensagem,\n  },\n}];\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000016",
+      "name": "Série sem XML para cruzar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Etapa 2 — tudo certo\nAvisar Chat, e-mail e WhatsApp em paralelo.\nNão segue para diagnóstico.",
+        "height": 120,
+        "width": 320,
+        "color": 4
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000009",
+      "name": "Etapa 2 — OK",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Etapa 3 — cruzar furo no ML\nPara cada NF ausente (máx. 5):\nlocaliza invoice_id no ZIP → se achar, diagnostica no Nerus.",
+        "height": 180,
+        "width": 360,
+        "color": 3
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000010",
+      "name": "Etapa 3 — cruzar no ML",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-encontrado",
+              "leftValue": "={{ $json.encontrado }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000017",
+      "name": "Invoice localizada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://monitor-sftp:8080/diagnostico",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ invoiceId: $json.invoiceId, numero: $json.numero, serie: $json.serie, mlUserId: $json.mlUserId || $('Separar NFs ausentes').item.json.mlUserId, chave: $json.chave, executarContigencia: true }) }}",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MONITOR_HTTP_TOKEN }}"
+            }
+          ]
+        },
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000018",
+      "name": "Diagnosticar no Nerus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        500
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 120,
+        "unit": "seconds"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000020",
+      "name": "Esperar 2 min após contingência",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3180,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://monitor-sftp:8080/diagnostico/entrega",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ invoiceId: $('Normalizar invoice').item.json.invoiceId, chave: $('Normalizar invoice').item.json.chave, mlUserId: $('Separar NFs ausentes').item.json.mlUserId }) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MONITOR_HTTP_TOKEN }}"
+            }
+          ]
+        },
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000021",
+      "name": "Rechecar entrega no Nerus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3440,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://monitor-sftp:8080/executar",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "notify",
+              "value": "false"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MONITOR_HTTP_TOKEN }}"
+            }
+          ]
+        },
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000022",
+      "name": "Rechecar FTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3700,
+        280
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 600,
+        "unit": "seconds"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000024",
+      "name": "Esperar 10 min o envio FTP",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3180,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`▶ Montar relatório do furo  ${$json.referencia || ''}  ${$json.proximaAcao || ''}`);\nfunction jsonDe(nomeNo) {\n  try {\n    return $(nomeNo).item.json;\n  } catch (e) {\n    return null;\n  }\n}\n\nconst entrada = $input.first().json;\nconst executionId = entrada.executionId || $execution.id;\nconst diag = jsonDe('Diagnosticar no Nerus');\nconst sftp = jsonDe('Rechecar FTP');\nconst origem = jsonDe('Normalizar invoice') || entrada;\n\nif (!diag && entrada.mensagem) {\n  return [{\n    json: {\n      ...entrada,\n      executionId,\n      mensagem: `${entrada.mensagem}\\n\\nexecução n8n=${executionId}`,\n    },\n  }];\n}\n\nconst extra = [];\nif (sftp && Array.isArray(sftp.notasAusentes)) {\n  const aindaFuro = sftp.notasAusentes.some(\n    (n) => Number(n.numero) === Number(origem.numero) && Number(n.serie) === Number(origem.serie),\n  );\n  extra.push(\n    aindaFuro\n      ? 'SFTP: a NF continua ausente no FTP após o diagnóstico.'\n      : 'SFTP: XML encontrado no FTP após o diagnóstico.',\n  );\n} else if (sftp && (sftp.error || sftp.ok === false)) {\n  extra.push(`Rechecar FTP falhou: ${sftp.erro || sftp.error?.message || 'HTTP'}`);\n}\n\nconst mensagemBase =\n  (diag && diag.mensagem) || (\n    origem.encontrado\n      ? `Invoice ${origem.invoiceId} mapeada, mas o diagnóstico não rodou.`\n      : `NF ${origem.referencia} não encontrada no relatório do Mercado Livre.`\n  );\n\nconst mensagem = [mensagemBase, ...extra, `execução n8n=${executionId}`]\n  .filter((l) => String(l ?? '').trim())\n  .join('\\n');\n\nreturn [{\n  json: {\n    referencia: origem.referencia,\n    numero: origem.numero,\n    serie: origem.serie,\n    invoiceId: origem.invoiceId || (diag && diag.invoiceId) || null,\n    encontrado: Boolean(origem.encontrado),\n    motivo: origem.motivo,\n    identificador: origem.identificador,\n    executionId,\n    proximaAcao: (diag && diag.proximaAcao) || origem.proximaAcao || 'nenhuma',\n    diagnostico: (diag && diag.diagnostico) || null,\n    precisaAdmin: Boolean(diag && diag.precisaAdmin) || !origem.encontrado,\n    assunto: (diag && diag.assunto) || `NF-e ${origem.referencia} — diagnóstico`,\n    mensagem,\n  },\n}];\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000026",
+      "name": "Montar relatório do furo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`▶ Invoice ausente no relatório ML  ${$json.referencia || ''}`);\nconst origem = $input.first().json;\nconst executionId = origem.executionId || $execution.id;\nconst mensagem =\n  `🔎 Diagnóstico NF ${origem.referencia || ''}\\n\\n` +\n  `Onde está o problema: a NF não foi encontrada no relatório fiscal do Mercado Livre.\\n` +\n  `motivo=${origem.motivo || ''}\\n` +\n  `execução n8n=${executionId}`;\n\nreturn [{\n  json: {\n    referencia: origem.referencia,\n    numero: origem.numero,\n    serie: origem.serie,\n    invoiceId: origem.invoiceId || null,\n    encontrado: false,\n    motivo: origem.motivo,\n    identificador: origem.identificador,\n    executionId,\n    precisaAdmin: true,\n    proximaAcao: 'nenhuma',\n    assunto: `NF-e ${origem.referencia} — não encontrada no ML`,\n    mensagem,\n  },\n}];\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000027",
+      "name": "Invoice ausente no relatório ML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        860
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.GOOGLE_CHAT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.mensagem }) }}",
+        "options": {},
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000028",
+      "name": "Avisar Google Chat (furo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4220,
+        360
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.ALERT_EMAIL_FROM }}",
+        "toEmail": "={{ $env.ALERT_EMAIL_TO }}",
+        "subject": "={{ $json.assunto }}",
+        "emailFormat": "text",
+        "text": "={{ $json.mensagem }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000029",
+      "name": "Avisar e-mail (furo)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        4220,
+        540
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $env.WHATSAPP_TO, text: $json.mensagem }) }}",
+        "options": {},
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000030",
+      "name": "Avisar WhatsApp (furo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4220,
+        720
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Etapa 4 — o que fazer no Nerus\nSwitch em proximaAcao:\n• contigencia → espera 2 min → reconsulta\n• esperar_entrega → espera 10 min → reconsulta\n• rechecar_ftp → só reconsulta o FTP\n• nenhuma → relatório para o admin",
+        "height": 200,
+        "width": 380,
+        "color": 5
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000031",
+      "name": "Etapa 4 — Nerus",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Segurança\nBearer MONITOR_HTTP_TOKEN em todo HTTP do monitor.\nToken ML nunca vai no json dos itens.\nChave NF-e mascarada nas mensagens.\nFAKE_NOTA vazio em produção.",
+        "height": 220,
+        "width": 360,
+        "color": 7
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000040",
+      "name": "Segurança",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Falhas\nChecar FTP e teto ML: se falhar, o workflow para (Error Trigger).\nAvisos (Chat/e-mail/WhatsApp): Continue on Fail.\nLigue o workflow 0. Error Handler em Settings.",
+        "height": 220,
+        "width": 380,
+        "color": 6
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000041",
+      "name": "Falhas",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Etapa 1 — checagem\nRelógio: n8n (seg–sex 8h, 12h, 15h, 17h, America/Sao_Paulo).\nLista XML no FTP, baixa o ZIP do ML e calcula o teto.\nSe não houver furo → etapa 2. Se houver → etapa 3.",
+        "height": 160,
+        "width": 340,
+        "color": 4
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000042",
+      "name": "Etapa 1 — checagem",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "sw-contigencia",
+                    "leftValue": "={{ $json.proximaAcao }}",
+                    "rightValue": "contigencia",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Contingência"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "sw-esperar",
+                    "leftValue": "={{ $json.proximaAcao }}",
+                    "rightValue": "esperar_entrega",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Esperar FTP"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "sw-rechecar",
+                    "leftValue": "={{ $json.proximaAcao }}",
+                    "rightValue": "rechecar_ftp",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Rechecar FTP"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000019",
+      "name": "Próxima ação",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2920,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Executar agora": {
+      "main": [
+        [
+          {
+            "node": "Checar FTP e teto ML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agendar checagem": {
+      "main": [
+        [
+          {
+            "node": "Checar FTP e teto ML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checar FTP e teto ML": {
+      "main": [
+        [
+          {
+            "node": "Montar resumo da checagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar resumo da checagem": {
+      "main": [
+        [
+          {
+            "node": "Integração OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integração OK?": {
+      "main": [
+        [
+          {
+            "node": "Avisar Google Chat (OK)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar e-mail (OK)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar WhatsApp (OK)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validar token Mercado Livre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar token Mercado Livre": {
+      "main": [
+        [
+          {
+            "node": "Separar NFs ausentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar NFs ausentes": {
+      "main": [
+        [
+          {
+            "node": "Há NF para cruzar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Há NF para cruzar?": {
+      "main": [
+        [
+          {
+            "node": "Localizar invoice no ZIP do ML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Série sem XML para cruzar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Localizar invoice no ZIP do ML": {
+      "main": [
+        [
+          {
+            "node": "Normalizar invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar invoice": {
+      "main": [
+        [
+          {
+            "node": "Invoice localizada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invoice localizada?": {
+      "main": [
+        [
+          {
+            "node": "Diagnosticar no Nerus",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invoice ausente no relatório ML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diagnosticar no Nerus": {
+      "main": [
+        [
+          {
+            "node": "Próxima ação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar 2 min após contingência": {
+      "main": [
+        [
+          {
+            "node": "Rechecar entrega no Nerus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar 10 min o envio FTP": {
+      "main": [
+        [
+          {
+            "node": "Rechecar entrega no Nerus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rechecar entrega no Nerus": {
+      "main": [
+        [
+          {
+            "node": "Rechecar FTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rechecar FTP": {
+      "main": [
+        [
+          {
+            "node": "Montar relatório do furo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invoice ausente no relatório ML": {
+      "main": [
+        [
+          {
+            "node": "Montar relatório do furo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar relatório do furo": {
+      "main": [
+        [
+          {
+            "node": "Avisar Google Chat (furo)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar e-mail (furo)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar WhatsApp (furo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Série sem XML para cruzar": {
+      "main": [
+        [
+          {
+            "node": "Montar relatório do furo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Próxima ação": {
+      "main": [
+        [
+          {
+            "node": "Esperar 2 min após contingência",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Esperar 10 min o envio FTP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rechecar FTP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Montar relatório do furo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "versionId": "a1b2c3d4-0001-4000-8000-000000000111"
+}

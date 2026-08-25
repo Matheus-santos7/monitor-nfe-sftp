@@ -1,0 +1,148 @@
+{
+  "id": "errHandlerNfe000001",
+  "name": "0. Error Handler — Monitor NF-e",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "err-0001-4000-8000-000000000001",
+      "name": "Falha no workflow",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst wf = d.workflow || {};\nconst ex = d.execution || {};\nconst err = ex.error || {};\nconst lastNode = ex.lastNodeExecuted || d.lastNodeExecuted || 'desconhecido';\nconst executionId = ex.id || '';\nconst mensagem =\n  '🚨 Workflow n8n falhou.\\n\\n' +\n  `workflow=${wf.name || ''}\\n` +\n  `nó=${lastNode}\\n` +\n  `execução=${executionId}\\n` +\n  `erro=${err.message || d.message || 'sem mensagem'}`;\nreturn [{\n  json: {\n    assunto: `Falha n8n — ${wf.name || 'workflow'}`,\n    mensagem,\n    lastNode,\n    executionId,\n  },\n}];\n"
+      },
+      "id": "err-0001-4000-8000-000000000002",
+      "name": "Montar alerta de falha",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.GOOGLE_CHAT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.mensagem }) }}",
+        "options": {}
+      },
+      "id": "err-0001-4000-8000-000000000003",
+      "name": "Google Chat — falha",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.ALERT_EMAIL_FROM }}",
+        "toEmail": "={{ $env.ALERT_EMAIL_TO }}",
+        "subject": "={{ $json.assunto }}",
+        "emailFormat": "text",
+        "text": "={{ $json.mensagem }}",
+        "options": {}
+      },
+      "id": "err-0001-4000-8000-000000000004",
+      "name": "E-mail — falha",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        560,
+        304
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $env.WHATSAPP_TO, text: $json.mensagem }) }}",
+        "options": {}
+      },
+      "id": "err-0001-4000-8000-000000000005",
+      "name": "WhatsApp — falha",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        448
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Error Trigger\\nLiga este workflow em **Settings → Error workflow** do `1. Monitor SFTP NF-e`.\\nAnexe a credencial SMTP no nó de e-mail.\\nNão inclui stack trace completo (PII/segredos).",
+        "height": 180,
+        "width": 360,
+        "color": 6
+      },
+      "id": "err-0001-4000-8000-000000000006",
+      "name": "Nota error handler",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Falha no workflow": {
+      "main": [
+        [
+          {
+            "node": "Montar alerta de falha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar alerta de falha": {
+      "main": [
+        [
+          {
+            "node": "Google Chat — falha",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "E-mail — falha",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "WhatsApp — falha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "versionId": "err-0001-4000-8000-000000000101"
+}

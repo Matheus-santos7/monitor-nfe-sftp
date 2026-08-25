@@ -1,0 +1,16 @@
+.env
+.n8n/
+local-files/*
+!local-files/.gitkeep
+*.log
+.DS_Store
+monitoramento/config.yml
+monitoramento/.env
+monitoramento/node_modules/
+monitoramento/dist/
+monitoramento/logs/
+monitoramento/data/
+secrets/*
+!secrets/README.md
+*.pem
+

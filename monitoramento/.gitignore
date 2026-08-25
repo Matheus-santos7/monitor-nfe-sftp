@@ -1,0 +1,8 @@
+node_modules/
+dist/
+config.yml
+.env
+.venv/
+logs/
+.DS_Store
+*.log

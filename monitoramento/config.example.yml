@@ -1,0 +1,39 @@
+# Copie para config.yml e preencha. Não commite senhas.
+#   cp config.example.yml config.yml
+
+cliente:
+  nome: Loja Exemplo
+  conta: "0000000000"
+  canal: Mercado Livre
+
+sftp:
+  host: sftp.exemplo.internal
+  porta: 22
+  usuario: nfe
+  senha: "altere-esta-senha"
+  diretorios:
+    - /xml-nfe
+    - /xml-nfe/Transferidos
+  # IP da VPN para bind de origem (opcional)
+  ip_origem: ""
+
+series:
+  - numero: 1
+    nota_inicial: 1
+  - numero: 2
+    nota_inicial: 1
+
+webhooks:
+  google_chat: "https://chat.googleapis.com/v1/spaces/EXEMPLO/messages?key=EXEMPLO&token=EXEMPLO"
+  painel: "http://host.docker.internal:3000/api/eventos/sftp"
+  painel_token: "token-exemplo-da-loja"
+
+# Relógio é o n8n (Schedule Trigger). Deixe vazio para o monitor só atender HTTP.
+agendamento: ""
+# true = também roda na subida do container (não use com restart: dispara a cada recreate)
+executar_ao_iniciar: false
+
+http:
+  porta: 8080
+  # Prefira MONITOR_HTTP_TOKEN no .env.
+  token: ""
