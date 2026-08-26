@@ -4,7 +4,7 @@ Séries, seller e tenant vêm do `.env` / `config.yml`.
 
 ## 1. Checagem (monitor)
 
-`POST /executar` — o **n8n** é o relógio (Schedule Trigger, seg–sex 8h/12h/15h/17h). O monitor não agenda sozinho.
+`POST /executar` — o **n8n** é o relógio (Schedule Trigger, seg–sex de hora em hora das 8h às 18h). O monitor não agenda sozinho.
 
 1. Lista XMLs nos diretórios SFTP (`config.yml`).
 2. Baixa o ZIP do ML **só do dia atual** (`ML_TETO_DIAS=1`):
@@ -23,7 +23,7 @@ n8n envia Google Chat / e-mail / WhatsApp: última NF do ML está no FTP e não 
 
 ## 3. Se há NF ausente
 
-Para cada `numero/serie`:
+Para **cada** `numero/serie` ausente no mesmo ciclo (sem teto de 5):
 
 1. `GET /ml/invoice?numero=&serie=` → `invoice_id` + chave (mesmo ZIP).
 2. `POST /diagnostico` consulta o MySQL via SSH:
@@ -67,12 +67,22 @@ Só quando o ML **não** notificou o gateway.
 }
 ```
 
-3. n8n espera **2 minutos**, reconsulta `/diagnostico/entrega` e o SFTP.
-4. A nota costuma aparecer em `invoice` em 1–3 min e segue para o controle de envio FTP.
+3. n8n diagnostica **cada** NF ausente (uma por vez). Só então espera **2 minutos** (contingência) ou **10 minutos** (envio FTP pendente) **uma vez para o lote**.
+4. Confere o SFTP de **todas** as notas do lote. Se ainda faltar alguma, espera mais 2 minutos e confere de novo.
+5. Avisa o resultado de cada NF e um resumo do lote (`3/5 no FTP`, etc.).
 
 ## 6. Relatório
 
-O n8n consolida os 5 passos do diagnóstico (chave completa, horários da tabela + Brasília) e acrescenta a linha do SFTP. Manda para Chat, e-mail e WhatsApp.
+Chat, e-mail e WhatsApp recebem um texto nesta ordem:
+
+1. **Resultado** — resolvido, em andamento ou precisa de atenção (depois de reconsultar o FTP).
+2. **O que aconteceu** — causa em linguagem comum (sem nome de tabela).
+3. **O que o monitor fez** — contingência, espera, reconsulta.
+4. **Onde parou** — só se ainda não resolveu, e só até o primeiro erro (os passos seguintes não rodaram).
+5. **O que fazer** — nada / aguardar / acionar o time técnico.
+6. **Rastro técnico** — consultas na ordem: tabela, filtro, linhas, ids e status; o que não rodou fica explícito; reconsulta de entrega e SFTP no final.
+
+O n8n não concatena o diagnóstico cru com a linha do SFTP: ele remonta o resultado final depois da reconsulta.
 
 ## FAKE_NOTA
 

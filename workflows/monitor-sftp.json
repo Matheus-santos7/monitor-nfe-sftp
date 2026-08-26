@@ -21,7 +21,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 8,12,15,17 * * 1-5"
+              "expression": "0 8-18 * * 1-5"
             }
           ]
         }
@@ -82,7 +82,7 @@
     },
     {
       "parameters": {
-        "jsCode": "console.log(`▶ Montar resumo da checagem  integração=${$json.integracaoOk}  furos=${($json.notasAusentes || []).length}`);\nfunction parseFakeNota(raw) {\n  const v = String(raw ?? '').trim();\n  if (!v || /^(0|false|off|no|desligada|disabled)$/i.test(v)) return null;\n  const m = v.match(/^(\\d+)\\s*[\\/,;x-]\\s*(\\d+)$/i);\n  if (!m) return null;\n  return { numero: Number(m[1]), serie: Number(m[2]) };\n}\n\nfunction horarioSaoPaulo() {\n  return new Intl.DateTimeFormat('pt-BR', {\n    timeZone: 'America/Sao_Paulo',\n    day: '2-digit',\n    month: '2-digit',\n    year: 'numeric',\n    hour: '2-digit',\n    minute: '2-digit',\n    hour12: false,\n  }).format(new Date());\n}\n\nconst MAX_DIAGNOSTICOS = 5;\nconst sftp = $input.first().json;\nconst executionId = $execution.id;\nconst horario = horarioSaoPaulo();\n\nif (sftp.ok === false || sftp.erro) {\n  throw new Error(`Checar SFTP falhou: ${sftp.erro || 'resposta inválida'}`);\n}\n\nconst series = Array.isArray(sftp.series) ? sftp.series : [];\nlet notasAusentes = Array.isArray(sftp.notasAusentes) ? [...sftp.notasAusentes] : [];\nlet integracaoOk = series.length > 0 && series.every((s) => s.totalAusentes === 0);\n\nconst fake = parseFakeNota($env.FAKE_NOTA);\nif (fake) {\n  if (!notasAusentes.some((n) => n.numero === fake.numero && n.serie === fake.serie)) {\n    notasAusentes = [fake, ...notasAusentes];\n  }\n  integracaoOk = false;\n}\n\nconst identificador = sftp.identificador || '';\nconst periodo = sftp.tetoPeriodo\n  ? (sftp.tetoPeriodo.start === sftp.tetoPeriodo.end\n      ? `Período teto ML: ${sftp.tetoPeriodo.start}`\n      : `Período teto ML: ${sftp.tetoPeriodo.start}–${sftp.tetoPeriodo.end}`)\n  : '';\nconst seriesLinha = series\n  .map((s) => {\n    const teto = s.tetoMl != null ? `, teto ML ${s.tetoMl} ` : '';\n    return `série ${s.serie} (FTP ${s.min} → ${s.max}${teto})`;\n  })\n  .join('\\n');\n\nconst cabecalho = [identificador, periodo, seriesLinha].filter(Boolean).join('\\n');\nconst prefixoTeste = fake ? `[TESTE FAKE_NOTA] ` : '';\n\nconst mensagemOk =\n  `${prefixoTeste}Monitoramento concluído ${horario}\\n\\n` +\n  'A integração de NF-e das séries monitoradas está 100% OK.\\n' +\n  'A última NF emitida pelo Mercado Livre está no FTP.\\n\\n' +\n  cabecalho;\n\nconst listaNotas = notasAusentes\n  .slice(0, 20)\n  .map((n) => `${n.numero}/${n.serie}`)\n  .join(', ');\n\nconst excedente =\n  notasAusentes.length > MAX_DIAGNOSTICOS\n    ? `\\n\\nDiagnóstico automático nas ${MAX_DIAGNOSTICOS} primeiras; ${notasAusentes.length - MAX_DIAGNOSTICOS} ficam para o próximo ciclo.`\n    : '';\n\nconst mensagemErro =\n  `${prefixoTeste}Monitoramento com pendências ${horario}\\n\\n` +\n  cabecalho +\n  (listaNotas ? `\\n\\nNotas ausentes no FTP: ${listaNotas}` : '') +\n  excedente;\n\ntry {\n  $execution.customData.set('executionId', String(executionId));\n  $execution.customData.set('integracaoOk', String(integracaoOk));\n  $execution.customData.set('furos', String(notasAusentes.length));\n} catch (e) {}\n\nreturn [\n  {\n    json: {\n      identificador,\n      series,\n      tetoPeriodo: sftp.tetoPeriodo || null,\n      integracaoOk,\n      notasAusentes,\n      fakeNota: fake,\n      executionId,\n      assunto: prefixoTeste + (integracaoOk\n        ? `Monitoramento concluído ${horario}`\n        : `Monitoramento com pendências ${horario}`),\n      mensagem: integracaoOk ? mensagemOk : mensagemErro,\n    },\n  },\n];\n"
+        "jsCode": "console.log(`▶ Montar resumo da checagem  integração=${$json.integracaoOk}  furos=${($json.notasAusentes || []).length}`);\nfunction parseFakeNota(raw) {\n  const v = String(raw ?? '').trim();\n  if (!v || /^(0|false|off|no|desligada|disabled)$/i.test(v)) return null;\n  const m = v.match(/^(\\d+)\\s*[\\/,;x-]\\s*(\\d+)$/i);\n  if (!m) return null;\n  return { numero: Number(m[1]), serie: Number(m[2]) };\n}\n\nfunction horarioSaoPaulo() {\n  return new Intl.DateTimeFormat('pt-BR', {\n    timeZone: 'America/Sao_Paulo',\n    day: '2-digit',\n    month: '2-digit',\n    year: 'numeric',\n    hour: '2-digit',\n    minute: '2-digit',\n    hour12: false,\n  }).format(new Date());\n}\n\nfunction listarAusentes(notas) {\n  const porSerie = new Map();\n  for (const n of notas) {\n    const s = Number(n.serie);\n    if (!porSerie.has(s)) porSerie.set(s, []);\n    porSerie.get(s).push(Number(n.numero));\n  }\n  const linhas = [];\n  for (const [serie, nums] of [...porSerie.entries()].sort((a, b) => a[0] - b[0])) {\n    nums.sort((a, b) => a - b);\n    const partes = [];\n    let i = 0;\n    while (i < nums.length) {\n      let j = i;\n      while (j + 1 < nums.length && nums[j + 1] === nums[j] + 1) j++;\n      partes.push(i === j ? String(nums[i]) : `${nums[i]}–${nums[j]}`);\n      i = j + 1;\n    }\n    linhas.push(`série ${serie}: ${partes.join(', ')}`);\n  }\n  return linhas.join('\\n');\n}\n\nconst sftp = $input.first().json;\nconst executionId = $execution.id;\nconst horario = horarioSaoPaulo();\n\nif (sftp.ok === false || sftp.erro) {\n  throw new Error(`Checar SFTP falhou: ${sftp.erro || 'resposta inválida'}`);\n}\n\nconst series = Array.isArray(sftp.series) ? sftp.series : [];\nlet notasAusentes = Array.isArray(sftp.notasAusentes) ? [...sftp.notasAusentes] : [];\nlet integracaoOk = series.length > 0 && series.every((s) => s.totalAusentes === 0);\n\nconst fake = parseFakeNota($env.FAKE_NOTA);\nif (fake) {\n  if (!notasAusentes.some((n) => n.numero === fake.numero && n.serie === fake.serie)) {\n    notasAusentes = [fake, ...notasAusentes];\n  }\n  integracaoOk = false;\n}\n\nconst identificador = sftp.identificador || '';\nconst periodo = sftp.tetoPeriodo\n  ? (sftp.tetoPeriodo.start === sftp.tetoPeriodo.end\n      ? `Período teto ML: ${sftp.tetoPeriodo.start}`\n      : `Período teto ML: ${sftp.tetoPeriodo.start}–${sftp.tetoPeriodo.end}`)\n  : '';\nconst seriesLinha = series\n  .map((s) => {\n    const teto = s.tetoMl != null ? `, teto ML ${s.tetoMl} ` : '';\n    return `série ${s.serie} (FTP ${s.min} → ${s.max}${teto})`;\n  })\n  .join('\\n');\n\nconst cabecalho = [identificador, periodo, seriesLinha].filter(Boolean).join('\\n');\nconst prefixoTeste = fake ? `[TESTE FAKE_NOTA] ` : '';\n\nconst mensagemOk =\n  `${prefixoTeste}Monitoramento concluído ${horario}\\n\\n` +\n  'A integração de NF-e das séries monitoradas está 100% OK.\\n' +\n  'A última NF emitida pelo Mercado Livre está no FTP.\\n\\n' +\n  cabecalho;\n\nconst listaNotas = notasAusentes.length ? listarAusentes(notasAusentes) : '';\nconst mensagemErro =\n  `${prefixoTeste}Monitoramento com pendências ${horario}\\n\\n` +\n  cabecalho +\n  (listaNotas\n    ? `\\n\\nNotas ausentes no FTP (${notasAusentes.length}):\\n${listaNotas}\\n\\nDiagnóstico automático em todas.`\n    : '');\n\ntry {\n  $execution.customData.set('executionId', String(executionId));\n  $execution.customData.set('integracaoOk', String(integracaoOk));\n  $execution.customData.set('furos', String(notasAusentes.length));\n} catch (e) {}\n\nreturn [\n  {\n    json: {\n      identificador,\n      series,\n      tetoPeriodo: sftp.tetoPeriodo || null,\n      integracaoOk,\n      notasAusentes,\n      fakeNota: fake,\n      executionId,\n      assunto: prefixoTeste + (integracaoOk\n        ? `Monitoramento concluído ${horario}`\n        : `Monitoramento com pendências ${horario}`),\n      mensagem: integracaoOk ? mensagemOk : mensagemErro,\n    },\n  },\n];\n"
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000003",
       "name": "Montar resumo da checagem",
@@ -217,7 +217,7 @@
     },
     {
       "parameters": {
-        "jsCode": "console.log(`▶ Separar NFs ausentes  ${$json.referencia || $json.motivo || ''}`);\nconst MAX_FUROS = 5;\nconst seller = $input.first().json;\nconst avaliacao = $('Montar resumo da checagem').first().json;\nconst mlUserId = seller.id || $env.ML_USER_ID;\nconst executionId = avaliacao.executionId || $execution.id;\n\nif (!mlUserId) {\n  throw new Error('GET /users/me não retornou id. Token inválido ou expirado.');\n}\n\nconst notas = Array.isArray(avaliacao.notasAusentes) ? avaliacao.notasAusentes : [];\nif (notas.length === 0) {\n  return [{\n    json: {\n      motivo: 'serie_sem_xml_ou_sem_furo_listavel',\n      mlUserId,\n      identificador: avaliacao.identificador,\n      executionId,\n      furosTotais: 0,\n      furosProcessados: 0,\n    },\n  }];\n}\n\nconst selecionadas = notas.slice(0, MAX_FUROS);\nreturn selecionadas.map((n) => ({\n  json: {\n    numero: n.numero,\n    serie: n.serie,\n    referencia: `${n.numero}/${n.serie}`,\n    motivo: 'xml_ausente_ftp',\n    mlUserId,\n    identificador: avaliacao.identificador,\n    executionId,\n    furosTotais: notas.length,\n    furosProcessados: selecionadas.length,\n  },\n}));\n"
+        "jsCode": "const run = $getWorkflowStaticData('run');\nrun.lote = [];\nconsole.log(`▶ Separar NFs ausentes  furos=${($('Montar resumo da checagem').first().json.notasAusentes || []).length}`);\nconst seller = $input.first().json;\nconst avaliacao = $('Montar resumo da checagem').first().json;\nconst mlUserId = seller.id || $env.ML_USER_ID;\nconst executionId = avaliacao.executionId || $execution.id;\n\nif (!mlUserId) {\n  throw new Error('GET /users/me não retornou id. Token inválido ou expirado.');\n}\n\nconst notas = Array.isArray(avaliacao.notasAusentes) ? avaliacao.notasAusentes : [];\nif (notas.length === 0) {\n  return [{\n    json: {\n      motivo: 'serie_sem_xml_ou_sem_furo_listavel',\n      mlUserId,\n      identificador: avaliacao.identificador,\n      executionId,\n      furosTotais: 0,\n      furosProcessados: 0,\n    },\n  }];\n}\n\nreturn notas.map((n) => ({\n  json: {\n    numero: n.numero,\n    serie: n.serie,\n    referencia: `${n.numero}/${n.serie}`,\n    motivo: 'xml_ausente_ftp',\n    mlUserId,\n    identificador: avaliacao.identificador,\n    executionId,\n    furosTotais: notas.length,\n    furosProcessados: notas.length,\n  },\n}));\n"
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000012",
       "name": "Separar NFs ausentes",
@@ -326,7 +326,7 @@
     },
     {
       "parameters": {
-        "jsCode": "console.log(`▶ Série sem XML para cruzar  ${$json.identificador || ''}`);\nconst origem = $input.first().json;\nconst executionId = origem.executionId || $execution.id;\nconst mensagem =\n  `🔎 Diagnóstico ${origem.referencia || origem.identificador || ''}\\n\\n` +\n  `Onde está o problema: série sem XML listável para cruzar com o Mercado Livre.\\n` +\n  `motivo=${origem.motivo || 'serie_sem_xml_ou_sem_furo_listavel'}\\n` +\n  `execução n8n=${executionId}`;\n\nreturn [{\n  json: {\n    encontrado: false,\n    precisaAdmin: true,\n    proximaAcao: 'nenhuma',\n    motivo: origem.motivo || 'serie_sem_xml_ou_sem_furo_listavel',\n    identificador: origem.identificador,\n    mlUserId: origem.mlUserId,\n    executionId,\n    assunto: `NF-e ${origem.identificador || ''} — série sem XML para cruzar`,\n    mensagem,\n  },\n}];\n"
+        "jsCode": "console.log(`▶ Série sem XML para cruzar  ${$json.identificador || ''}`);\nconst origem = $input.first().json;\nconst executionId = origem.executionId || $execution.id;\nconst quem = origem.referencia || origem.identificador || '';\nconst mensagem =\n  (quem ? `NF ${quem}\\n\\n` : '') +\n  '⚠️ Precisa de atenção — não foi possível cruzar esta série com o Mercado Livre.\\n' +\n  'Não há XML no FTP para montar a sequência das notas.\\n\\n' +\n  'O que fazer:\\n' +\n  'Acionar o time técnico.\\n\\n' +\n  `execução n8n=${executionId}`;\n\nreturn [{\n  json: {\n    encontrado: false,\n    precisaAdmin: true,\n    proximaAcao: 'nenhuma',\n    motivo: origem.motivo || 'serie_sem_xml_ou_sem_furo_listavel',\n    identificador: origem.identificador,\n    mlUserId: origem.mlUserId,\n    executionId,\n    assunto: `NF-e ${origem.identificador || ''} — série sem XML para cruzar`,\n    mensagem,\n  },\n}];\n"
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000016",
       "name": "Série sem XML para cruzar",
@@ -355,7 +355,7 @@
     },
     {
       "parameters": {
-        "content": "## Etapa 3 — cruzar furo no ML\nPara cada NF ausente (máx. 5):\nlocaliza invoice_id no ZIP → se achar, diagnostica no Nerus.",
+        "content": "## Etapa 3 — cruzar furo no ML\nUma NF por vez: localiza invoice → diagnostica.\nDepois do lote: espera 2/10 min uma vez e confere o FTP de todas.",
         "height": 180,
         "width": 360,
         "color": 3
@@ -561,7 +561,7 @@
     },
     {
       "parameters": {
-        "jsCode": "console.log(`▶ Montar relatório do furo  ${$json.referencia || ''}  ${$json.proximaAcao || ''}`);\nfunction jsonDe(nomeNo) {\n  try {\n    return $(nomeNo).item.json;\n  } catch (e) {\n    return null;\n  }\n}\n\nconst entrada = $input.first().json;\nconst executionId = entrada.executionId || $execution.id;\nconst diag = jsonDe('Diagnosticar no Nerus');\nconst sftp = jsonDe('Rechecar FTP');\nconst origem = jsonDe('Normalizar invoice') || entrada;\n\nif (!diag && entrada.mensagem) {\n  return [{\n    json: {\n      ...entrada,\n      executionId,\n      mensagem: `${entrada.mensagem}\\n\\nexecução n8n=${executionId}`,\n    },\n  }];\n}\n\nconst extra = [];\nif (sftp && Array.isArray(sftp.notasAusentes)) {\n  const aindaFuro = sftp.notasAusentes.some(\n    (n) => Number(n.numero) === Number(origem.numero) && Number(n.serie) === Number(origem.serie),\n  );\n  extra.push(\n    aindaFuro\n      ? 'SFTP: a NF continua ausente no FTP após o diagnóstico.'\n      : 'SFTP: XML encontrado no FTP após o diagnóstico.',\n  );\n} else if (sftp && (sftp.error || sftp.ok === false)) {\n  extra.push(`Rechecar FTP falhou: ${sftp.erro || sftp.error?.message || 'HTTP'}`);\n}\n\nconst mensagemBase =\n  (diag && diag.mensagem) || (\n    origem.encontrado\n      ? `Invoice ${origem.invoiceId} mapeada, mas o diagnóstico não rodou.`\n      : `NF ${origem.referencia} não encontrada no relatório do Mercado Livre.`\n  );\n\nconst mensagem = [mensagemBase, ...extra, `execução n8n=${executionId}`]\n  .filter((l) => String(l ?? '').trim())\n  .join('\\n');\n\nreturn [{\n  json: {\n    referencia: origem.referencia,\n    numero: origem.numero,\n    serie: origem.serie,\n    invoiceId: origem.invoiceId || (diag && diag.invoiceId) || null,\n    encontrado: Boolean(origem.encontrado),\n    motivo: origem.motivo,\n    identificador: origem.identificador,\n    executionId,\n    proximaAcao: (diag && diag.proximaAcao) || origem.proximaAcao || 'nenhuma',\n    diagnostico: (diag && diag.diagnostico) || null,\n    precisaAdmin: Boolean(diag && diag.precisaAdmin) || !origem.encontrado,\n    assunto: (diag && diag.assunto) || `NF-e ${origem.referencia} — diagnóstico`,\n    mensagem,\n  },\n}];\n"
+        "jsCode": "console.log(`▶ Montar relatório do furo  ${$json.referencia || ''}  ${$json.proximaAcao || ''}`);\nfunction jsonDe(nomeNo) {\n  try {\n    return $(nomeNo).item.json;\n  } catch (e) {\n    return null;\n  }\n}\n\nconst entrada = $input.first().json;\nconst executionId = entrada.executionId || $execution.id;\nconst diag = jsonDe('Diagnosticar no Nerus');\nconst sftp = jsonDe('Rechecar FTP');\nconst entrega = jsonDe('Rechecar entrega no Nerus');\nconst origem = jsonDe('Normalizar invoice') || entrada;\n\nif (!diag && entrada.mensagem) {\n  const jaTemExec = String(entrada.mensagem).includes('execução n8n=');\n  return [{\n    json: {\n      ...entrada,\n      executionId,\n      mensagem: jaTemExec ? entrada.mensagem : `${entrada.mensagem}\\n\\nexecução n8n=${executionId}`,\n    },\n  }];\n}\n\nlet xmlNoFtp = null;\nif (sftp && Array.isArray(sftp.notasAusentes)) {\n  const aindaFuro = sftp.notasAusentes.some(\n    (n) => Number(n.numero) === Number(origem.numero) && Number(n.serie) === Number(origem.serie),\n  );\n  xmlNoFtp = !aindaFuro;\n}\n\nconst classificacaoEntrega = (entrega && entrega.classificacaoEntrega) || null;\nconst referencia = origem.referencia || (diag && diag.referencia) || '';\nconst invoiceId = origem.invoiceId || (diag && diag.invoiceId) || '';\nconst chave = (diag && diag.chave) || origem.chave || '';\nconst diagnostico = (diag && diag.diagnostico) || '';\nconst proximaAcao = (diag && diag.proximaAcao) || origem.proximaAcao || 'nenhuma';\nconst passos = diag && Array.isArray(diag.passos) ? diag.passos : [];\nconst contigencia = diag && diag.contigencia;\n\nfunction oQueMonitorFez() {\n  const c = passos.find((p) => p.id === 'contigencia');\n  if (c && c.status === 'ok') {\n    if (xmlNoFtp === true) return 'Reenviou o aviso ao sistema (contingência). Depois disso, o XML apareceu no FTP.';\n    if (xmlNoFtp === false) return 'Reenviou o aviso ao sistema (contingência) e conferiu de novo. A nota ainda não chegou ao FTP.';\n    return 'Reenviou o aviso ao sistema (contingência).';\n  }\n  if (c && c.status === 'erro') {\n    return `Tentou reenviar o aviso ao sistema (contingência), mas não conseguiu: ${c.detalhe}`;\n  }\n  if (proximaAcao === 'esperar_entrega') {\n    if (xmlNoFtp === true) return 'Aguardou o envio ao FTP. O XML apareceu na pasta.';\n    if (xmlNoFtp === false) return 'Aguardou o envio ao FTP, mas o arquivo ainda não apareceu na pasta.';\n    return 'A nota já estava no Nerus; o envio ao FTP ainda estava em andamento.';\n  }\n  if (proximaAcao === 'rechecar_ftp') {\n    if (xmlNoFtp === true) return 'Conferiu o FTP e encontrou o XML.';\n    if (xmlNoFtp === false) return 'O envio ao FTP já tinha sido disparado, mas o arquivo ainda não estava na pasta.';\n    return 'O envio ao FTP já tinha sido disparado. Falta conferir se o XML chegou na pasta.';\n  }\n  return 'Não reenviou o aviso: o problema não é falta de notificação do Mercado Livre.';\n}\n\nlet banner;\nlet oQueFazer;\nlet assuntoSufixo;\nlet resolvido;\nlet precisaAdmin;\nif (xmlNoFtp === true) {\n  banner = '✅ Resolvido — o XML da nota já está no FTP.';\n  oQueFazer = 'Nada a fazer.';\n  assuntoSufixo = 'resolvido';\n  resolvido = true;\n  precisaAdmin = false;\n} else if (xmlNoFtp === false && classificacaoEntrega === 'enviada') {\n  banner = '⏳ Em andamento — o envio ao FTP já foi disparado, mas o arquivo ainda não apareceu na pasta.';\n  oQueFazer = 'Aguardar o próximo ciclo de monitoramento. Se a nota não aparecer, acionar o time técnico.';\n  assuntoSufixo = 'envio em andamento';\n  resolvido = false;\n  precisaAdmin = true;\n} else if (xmlNoFtp === false) {\n  banner = '⚠️ Ainda não resolvido — a nota continua ausente no FTP.';\n  oQueFazer = 'Acionar o time técnico.';\n  assuntoSufixo = 'ainda ausente no FTP';\n  resolvido = false;\n  precisaAdmin = true;\n} else if (proximaAcao === 'contigencia') {\n  banner = '⚠️ Pendência — o Mercado Livre não avisou o sistema.';\n  oQueFazer = 'O monitor já reenviou o aviso. Aguardar 1–3 minutos e conferir se o XML chegou ao FTP.';\n  assuntoSufixo = 'Mercado Livre não avisou';\n  resolvido = false;\n  precisaAdmin = true;\n} else if (proximaAcao === 'esperar_entrega') {\n  banner = '⏳ Em andamento — a nota está no Nerus, aguardando o envio ao FTP.';\n  oQueFazer = 'Aguardar cerca de 10 minutos e conferir de novo.';\n  assuntoSufixo = 'aguardando envio ao FTP';\n  resolvido = false;\n  precisaAdmin = true;\n} else if (proximaAcao === 'rechecar_ftp') {\n  banner = '⏳ Em andamento — conferindo se o XML já está no FTP.';\n  oQueFazer = 'Conferir o FTP. Se o XML não estiver lá, acionar o time técnico.';\n  assuntoSufixo = 'conferir FTP';\n  resolvido = false;\n  precisaAdmin = false;\n} else {\n  banner = '⚠️ Precisa de atenção — a nota não chegou ao FTP.';\n  oQueFazer = 'Acionar o time técnico. Este caso não se resolve sozinho.';\n  assuntoSufixo = 'precisa de atenção';\n  resolvido = false;\n  precisaAdmin = true;\n}\n\nif (sftp && (sftp.error || sftp.ok === false)) {\n  oQueFazer = `Não deu para conferir o FTP (${sftp.erro || (sftp.error && sftp.error.message) || 'HTTP'}). ${oQueFazer}`;\n}\n\nconst linhas = [\n  `NF ${referencia}`,\n  '',\n  banner,\n  oQueFazer,\n  '',\n  xmlNoFtp === true ? 'O que tinha acontecido:' : 'O que aconteceu:',\n  diagnostico || 'Não foi possível montar o diagnóstico.',\n  '',\n  'O que o monitor fez:',\n  oQueMonitorFez(),\n];\n\nif (xmlNoFtp !== true) {\n  const pipeline = passos.filter((p) => p.id !== 'contigencia');\n  const primeiroErro = pipeline.findIndex((p) => p.status === 'erro');\n  const visiveis = primeiroErro >= 0 ? pipeline.slice(0, primeiroErro + 1) : pipeline;\n  if (visiveis.length) {\n    linhas.push('', 'Onde a integração parou:');\n    for (const p of visiveis) {\n      linhas.push(p.detalhe ? `• ${p.titulo} — ${p.detalhe}` : `• ${p.titulo}`);\n    }\n    if (primeiroErro >= 0 && primeiroErro < pipeline.length - 1) {\n      linhas.push('Os passos seguintes ainda não rodaram por causa disso.');\n    }\n  }\n}\n\nfunction dumpRastro(itens) {\n  return (itens || []).map((item) => {\n    const ls = [`${item.n}. ${item.tabela}`];\n    if (item.filtro) ls.push(`   WHERE ${item.filtro}`);\n    if (!item.executado) ls.push(`   → não executado — ${item.detalhe}`);\n    else if (String(item.detalhe || '').startsWith('ERRO:')) ls.push(`   → ${item.detalhe}`);\n    else if (!item.linhas && (!item.detalhe || item.detalhe === '0 linhas')) ls.push('   → 0 linhas');\n    else ls.push(`   → ${item.linhas} linha(s)${item.detalhe ? ' — ' + item.detalhe : ''}`);\n    return ls.join('\\n');\n  }).join('\\n\\n');\n}\n\nlinhas.push('', 'Rastro técnico');\nlinhas.push(`invoice_id=${invoiceId}${chave ? '  chave=' + chave : ''}`);\nif (diag && Array.isArray(diag.rastro) && diag.rastro.length) {\n  linhas.push('', dumpRastro(diag.rastro));\n} else if (contigencia && contigencia.notificationId) {\n  linhas.push(`contingência ${contigencia.notificationId}`);\n}\nif (entrega && Array.isArray(entrega.rastro) && entrega.rastro.length) {\n  linhas.push('');\n  linhas.push('Reconsulta POST /diagnostico/entrega');\n  linhas.push(dumpRastro(entrega.rastro));\n} else if (entrega && entrega.classificacaoEntrega) {\n  linhas.push('');\n  linhas.push(`Reconsulta POST /diagnostico/entrega → ${entrega.classificacaoEntrega}`);\n}\nif (xmlNoFtp === true) linhas.push('Rechecar SFTP → XML encontrado');\nelse if (xmlNoFtp === false) linhas.push('Rechecar SFTP → XML ainda ausente');\nlinhas.push(`execução n8n=${executionId}`);\n\nconst mensagem = linhas.join('\\n');\n\nreturn [{\n  json: {\n    referencia,\n    numero: origem.numero,\n    serie: origem.serie,\n    invoiceId: invoiceId || null,\n    encontrado: Boolean(origem.encontrado),\n    motivo: origem.motivo,\n    identificador: origem.identificador,\n    executionId,\n    proximaAcao,\n    diagnostico,\n    precisaAdmin,\n    resolvido,\n    assunto: `NF-e ${referencia} — ${assuntoSufixo}`,\n    mensagem,\n  },\n}];\n"
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000026",
       "name": "Montar relatório do furo",
@@ -574,7 +574,7 @@
     },
     {
       "parameters": {
-        "jsCode": "console.log(`▶ Invoice ausente no relatório ML  ${$json.referencia || ''}`);\nconst origem = $input.first().json;\nconst executionId = origem.executionId || $execution.id;\nconst mensagem =\n  `🔎 Diagnóstico NF ${origem.referencia || ''}\\n\\n` +\n  `Onde está o problema: a NF não foi encontrada no relatório fiscal do Mercado Livre.\\n` +\n  `motivo=${origem.motivo || ''}\\n` +\n  `execução n8n=${executionId}`;\n\nreturn [{\n  json: {\n    referencia: origem.referencia,\n    numero: origem.numero,\n    serie: origem.serie,\n    invoiceId: origem.invoiceId || null,\n    encontrado: false,\n    motivo: origem.motivo,\n    identificador: origem.identificador,\n    executionId,\n    precisaAdmin: true,\n    proximaAcao: 'nenhuma',\n    assunto: `NF-e ${origem.referencia} — não encontrada no ML`,\n    mensagem,\n  },\n}];\n"
+        "jsCode": "const run = $getWorkflowStaticData('run');\nif (!Array.isArray(run.lote)) run.lote = [];\nconsole.log(`▶ Invoice ausente no relatório ML  ${$json.referencia || ''}`);\nconst origem = $input.first().json;\nconst executionId = origem.executionId || $execution.id;\nconst mensagem =\n  `NF ${origem.referencia || ''}\\n\\n` +\n  '⚠️ Precisa de atenção — a nota não foi encontrada no relatório do Mercado Livre.\\n\\n' +\n  'Sem o identificador da nota no Mercado Livre, o diagnóstico no Nerus não consegue rodar.\\n\\n' +\n  'O que fazer:\\n' +\n  'Acionar o time técnico.\\n\\n' +\n  `execução n8n=${executionId}`;\n\nrun.lote.push({\n    referencia: origem.referencia,\n    numero: origem.numero,\n    serie: origem.serie,\n    invoiceId: origem.invoiceId || null,\n    encontrado: false,\n    precisaAdmin: true,\n    proximaAcao: 'nenhuma',\n    diagnostico: 'A nota não foi encontrada no relatório do Mercado Livre.',\n    mensagem,\n    assunto: `NF-e ${origem.referencia} — não encontrada no ML`,\n  });\nreturn [{\n  json: {\n    referencia: origem.referencia,\n    numero: origem.numero,\n    serie: origem.serie,\n    invoiceId: origem.invoiceId || null,\n    encontrado: false,\n    motivo: origem.motivo,\n    identificador: origem.identificador,\n    executionId,\n    precisaAdmin: true,\n    proximaAcao: 'nenhuma',\n    assunto: `NF-e ${origem.referencia} — não encontrada no ML`,\n    mensagem,\n  },\n}];\n"
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000027",
       "name": "Invoice ausente no relatório ML",
@@ -798,6 +798,322 @@
         2920,
         500
       ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000050",
+      "name": "Uma NF por vez",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`▶ Guardar diagnóstico  ${$json.referencia || ''}  lote=${(($getWorkflowStaticData('run').lote || []).length) + 1}`);\nconst run = $getWorkflowStaticData('run');\nif (!Array.isArray(run.lote)) run.lote = [];\nconst item = $input.first().json;\nrun.lote.push(item);\nreturn $input.all();\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000051",
+      "name": "Guardar diagnóstico",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2920,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const run = $getWorkflowStaticData('run');\nconst lote = Array.isArray(run.lote) ? run.lote : [];\nconst acoes = lote.map((d) => d.proximaAcao);\nlet espera = 'nenhuma';\nif (acoes.includes('esperar_entrega')) espera = '10min';\nelse if (acoes.includes('contigencia')) espera = '2min';\nconsole.log(`▶ Espera do lote  notas=${lote.length}  espera=${espera}`);\nreturn [{ json: { espera, total: lote.length, executionId: $execution.id } }];\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000052",
+      "name": "Decidir espera do lote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "sw-10",
+                    "leftValue": "={{ $json.espera }}",
+                    "rightValue": "10min",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "10 min"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "sw-2",
+                    "leftValue": "={{ $json.espera }}",
+                    "rightValue": "2min",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "2 min"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000053",
+      "name": "Espera do lote?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`▶ Montar relatórios do lote  ${($getWorkflowStaticData('run').lote || []).length}`);\nconst run = $getWorkflowStaticData('run');\nconst lote = Array.isArray(run.lote) ? run.lote : [];\nconst sftp = $input.first().json;\nconst executionId = $execution.id;\nconst originais = $('Montar resumo da checagem').first().json.notasAusentes || [];\n\nfunction xmlNoFtpDe(numero, serie) {\n  if (!sftp || !Array.isArray(sftp.notasAusentes)) return null;\n  const ainda = sftp.notasAusentes.some(\n    (n) => Number(n.numero) === Number(numero) && Number(n.serie) === Number(serie),\n  );\n  return !ainda;\n}\n\nfunction dumpRastro(itens) {\n  return (itens || []).map((item) => {\n    const ls = [`${item.n}. ${item.tabela}`];\n    if (item.filtro) ls.push(`   WHERE ${item.filtro}`);\n    if (!item.executado) ls.push(`   → não executado — ${item.detalhe}`);\n    else if (String(item.detalhe || '').startsWith('ERRO:')) ls.push(`   → ${item.detalhe}`);\n    else if (!item.linhas && (!item.detalhe || item.detalhe === '0 linhas')) ls.push('   → 0 linhas');\n    else ls.push(`   → ${item.linhas} linha(s)${item.detalhe ? ' — ' + item.detalhe : ''}`);\n    return ls.join('\\n');\n  }).join('\\n\\n');\n}\n\nfunction relatorioDe(diag) {\n  const xmlNoFtp = xmlNoFtpDe(diag.numero, diag.serie);\n  const referencia = diag.referencia || `${diag.numero}/${diag.serie}`;\n  const invoiceId = diag.invoiceId || '';\n  const chave = diag.chave || '';\n  const diagnostico = diag.diagnostico || diag.mensagem || 'Não foi possível montar o diagnóstico.';\n  const proximaAcao = diag.proximaAcao || 'nenhuma';\n  const passos = Array.isArray(diag.passos) ? diag.passos : [];\n  const contigencia = diag.contigencia;\n  const c = passos.find((p) => p.id === 'contigencia');\n\n  let oQueMonitorFez = 'Não reenviou o aviso: o problema não é falta de notificação do Mercado Livre.';\n  if (c && c.status === 'ok') {\n    if (xmlNoFtp === true) oQueMonitorFez = 'Reenviou o aviso ao sistema (contingência). Depois disso, o XML apareceu no FTP.';\n    else if (xmlNoFtp === false) oQueMonitorFez = 'Reenviou o aviso ao sistema (contingência) e conferiu de novo. A nota ainda não chegou ao FTP.';\n    else oQueMonitorFez = 'Reenviou o aviso ao sistema (contingência).';\n  } else if (c && c.status === 'erro') {\n    oQueMonitorFez = `Tentou reenviar o aviso ao sistema (contingência), mas não conseguiu: ${c.detalhe}`;\n  } else if (proximaAcao === 'esperar_entrega') {\n    oQueMonitorFez = xmlNoFtp === true\n      ? 'Aguardou o envio ao FTP. O XML apareceu na pasta.'\n      : 'Aguardou o envio ao FTP, mas o arquivo ainda não apareceu na pasta.';\n  } else if (proximaAcao === 'rechecar_ftp') {\n    oQueMonitorFez = xmlNoFtp === true\n      ? 'Conferiu o FTP e encontrou o XML.'\n      : 'O envio ao FTP já tinha sido disparado, mas o arquivo ainda não estava na pasta.';\n  }\n\n  let banner, oQueFazer, assuntoSufixo, resolvido, precisaAdmin;\n  if (xmlNoFtp === true) {\n    banner = '✅ Resolvido — o XML da nota já está no FTP.';\n    oQueFazer = 'Nada a fazer.';\n    assuntoSufixo = 'resolvido';\n    resolvido = true;\n    precisaAdmin = false;\n  } else if (xmlNoFtp === false) {\n    banner = '⚠️ Ainda não resolvido — a nota continua ausente no FTP.';\n    oQueFazer = 'O monitor ainda vai conferir o lote de novo. Se persistir, acionar o time técnico.';\n    assuntoSufixo = 'ainda ausente no FTP';\n    resolvido = false;\n    precisaAdmin = true;\n  } else {\n    banner = '⚠️ Precisa de atenção — a nota não chegou ao FTP.';\n    oQueFazer = 'Acionar o time técnico.';\n    assuntoSufixo = 'precisa de atenção';\n    resolvido = false;\n    precisaAdmin = true;\n  }\n\n  const linhas = [\n    `NF ${referencia}`,\n    '',\n    banner,\n    oQueFazer,\n    '',\n    xmlNoFtp === true ? 'O que tinha acontecido:' : 'O que aconteceu:',\n    diagnostico,\n    '',\n    'O que o monitor fez:',\n    oQueMonitorFez,\n  ];\n  if (xmlNoFtp !== true) {\n    const pipeline = passos.filter((p) => p.id !== 'contigencia');\n    const primeiroErro = pipeline.findIndex((p) => p.status === 'erro');\n    const visiveis = primeiroErro >= 0 ? pipeline.slice(0, primeiroErro + 1) : pipeline;\n    if (visiveis.length) {\n      linhas.push('', 'Onde a integração parou:');\n      for (const p of visiveis) {\n        linhas.push(p.detalhe ? `• ${p.titulo} — ${p.detalhe}` : `• ${p.titulo}`);\n      }\n      if (primeiroErro >= 0 && primeiroErro < pipeline.length - 1) {\n        linhas.push('Os passos seguintes ainda não rodaram por causa disso.');\n      }\n    }\n  }\n  linhas.push('', 'Rastro técnico');\n  linhas.push(`invoice_id=${invoiceId}${chave ? '  chave=' + chave : ''}`);\n  if (Array.isArray(diag.rastro) && diag.rastro.length) {\n    linhas.push('', dumpRastro(diag.rastro));\n  } else if (contigencia && contigencia.notificationId) {\n    linhas.push(`contingência ${contigencia.notificationId}`);\n  }\n  if (xmlNoFtp === true) linhas.push('Rechecar SFTP → XML encontrado');\n  else if (xmlNoFtp === false) linhas.push('Rechecar SFTP → XML ainda ausente');\n  linhas.push(`execução n8n=${executionId}`);\n\n  return {\n    referencia,\n    numero: diag.numero,\n    serie: diag.serie,\n    invoiceId: invoiceId || null,\n    executionId,\n    proximaAcao,\n    diagnostico,\n    precisaAdmin,\n    resolvido,\n    xmlNoFtp,\n    assunto: `NF-e ${referencia} — ${assuntoSufixo}`,\n    mensagem: linhas.join('\\n'),\n  };\n}\n\nconst itens = (lote.length ? lote : originais.map((n) => ({\n  numero: n.numero,\n  serie: n.serie,\n  referencia: `${n.numero}/${n.serie}`,\n  proximaAcao: 'nenhuma',\n  diagnostico: 'Diagnóstico não gravado neste ciclo.',\n}))).map(relatorioDe);\n\nrun.faltandoAposLote = itens.filter((i) => i.xmlNoFtp === false).map((i) => ({\n  numero: i.numero,\n  serie: i.serie,\n  referencia: i.referencia,\n}));\n\nreturn itens.map((json) => ({ json }));\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000054",
+      "name": "Montar relatórios do lote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-faltam",
+              "leftValue": "={{ $json.aindaFaltam }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000055",
+      "name": "Ainda faltam no FTP?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2660,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const originais = $('Montar resumo da checagem').first().json.notasAusentes || [];\nconst sftp = $input.first().json;\nconst ausentes = Array.isArray(sftp.notasAusentes) ? sftp.notasAusentes : [];\nconst faltando = originais.filter((o) =>\n  ausentes.some((a) => Number(a.numero) === Number(o.numero) && Number(a.serie) === Number(o.serie)),\n);\nconst noFtp = originais.length - faltando.length;\nconsole.log(`▶ Conferir lote no FTP  ${noFtp}/${originais.length}  faltando=${faltando.length}`);\nreturn [{\n  json: {\n    ...sftp,\n    aindaFaltam: faltando.length > 0,\n    faltando,\n    total: originais.length,\n    noFtp,\n    executionId: $execution.id,\n  },\n}];\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000062",
+      "name": "Conferir pendências do lote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ $json.aindaFaltam ? 120 : 1 }}",
+        "unit": "seconds"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000056",
+      "name": "Esperar 2 min (conferência)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2920,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://monitor-sftp:8080/executar",
+        "options": {
+          "timeout": 180000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "notify",
+              "value": "false"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MONITOR_HTTP_TOKEN }}"
+            }
+          ]
+        },
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000057",
+      "name": "Rechecar FTP (conferência)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3180,
+        -80
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const sftp = $input.first().json;\nconst originais = $('Montar resumo da checagem').first().json.notasAusentes || [];\nconst ausentes = Array.isArray(sftp.notasAusentes) ? sftp.notasAusentes : [];\nconst faltando = originais.filter((o) =>\n  ausentes.some((a) => Number(a.numero) === Number(o.numero) && Number(a.serie) === Number(o.serie)),\n);\nconst noFtp = originais.length - faltando.length;\nconst executionId = $execution.id;\nconst listaFalta = faltando.map((n) => `${n.numero}/${n.serie}`).join(', ');\nconst listaOk = originais\n  .filter((o) => !faltando.some((f) => f.numero === o.numero && f.serie === o.serie))\n  .map((n) => `${n.numero}/${n.serie}`)\n  .join(', ');\n\nlet mensagem;\nlet assunto;\nif (originais.length === 0) {\n  assunto = 'Lote de furos — nada a conferir';\n  mensagem = 'Não havia furos para conferir no FTP.';\n} else if (faltando.length === 0) {\n  assunto = `Lote de furos — ${noFtp}/${originais.length} no FTP`;\n  mensagem =\n    `✅ Lote concluído — as ${originais.length} notas ausentes já estão no FTP.\\n\\n` +\n    `Notas: ${listaOk}\\n\\n` +\n    `execução n8n=${executionId}`;\n} else {\n  assunto = `Lote de furos — ${noFtp}/${originais.length} no FTP`;\n  mensagem =\n    `⚠️ Lote incompleto — ${noFtp} de ${originais.length} notas estão no FTP.\\n\\n` +\n    (listaOk ? `Já no FTP: ${listaOk}\\n` : '') +\n    `Ainda faltam: ${listaFalta}\\n\\n` +\n    'Acionar o time técnico para as que continuam ausentes.\\n\\n' +\n    `execução n8n=${executionId}`;\n}\n\nreturn [{\n  json: {\n    aindaFaltam: faltando.length > 0,\n    faltando,\n    total: originais.length,\n    noFtp,\n    executionId,\n    precisaAdmin: faltando.length > 0,\n    assunto,\n    mensagem,\n  },\n}];\n"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000058",
+      "name": "Relatório de conferência do lote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3440,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.GOOGLE_CHAT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.mensagem }) }}",
+        "options": {},
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000059",
+      "name": "Avisar Google Chat (lote)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3700,
+        -80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.ALERT_EMAIL_FROM }}",
+        "toEmail": "={{ $env.ALERT_EMAIL_TO }}",
+        "subject": "={{ $json.assunto }}",
+        "emailFormat": "text",
+        "text": "={{ $json.mensagem }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000060",
+      "name": "Avisar e-mail (lote)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3700,
+        40
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $env.WHATSAPP_TO, text: $json.mensagem }) }}",
+        "options": {},
+        "authentication": "none"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000061",
+      "name": "Avisar WhatsApp (lote)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3700,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Lote de furos\nUma NF por vez (Wait do n8n só segura 1 item).\nDiagnostica todas → espera 2 ou 10 min uma vez → confere o FTP do lote. Se ainda faltar, espera +2 min e confere de novo.",
+        "height": 180,
+        "width": 380,
+        "color": 5
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000063",
+      "name": "Etapa lote",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1880,
+        -80
+      ]
     }
   ],
   "connections": {
@@ -899,7 +1215,7 @@
       "main": [
         [
           {
-            "node": "Localizar invoice no ZIP do ML",
+            "node": "Uma NF por vez",
             "type": "main",
             "index": 0
           }
@@ -957,7 +1273,7 @@
       "main": [
         [
           {
-            "node": "Próxima ação",
+            "node": "Guardar diagnóstico",
             "type": "main",
             "index": 0
           }
@@ -968,7 +1284,7 @@
       "main": [
         [
           {
-            "node": "Rechecar entrega no Nerus",
+            "node": "Rechecar FTP",
             "type": "main",
             "index": 0
           }
@@ -979,7 +1295,7 @@
       "main": [
         [
           {
-            "node": "Rechecar entrega no Nerus",
+            "node": "Rechecar FTP",
             "type": "main",
             "index": 0
           }
@@ -1001,7 +1317,7 @@
       "main": [
         [
           {
-            "node": "Montar relatório do furo",
+            "node": "Conferir pendências do lote",
             "type": "main",
             "index": 0
           }
@@ -1012,7 +1328,7 @@
       "main": [
         [
           {
-            "node": "Montar relatório do furo",
+            "node": "Uma NF por vez",
             "type": "main",
             "index": 0
           }
@@ -1077,6 +1393,174 @@
         [
           {
             "node": "Montar relatório do furo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uma NF por vez": {
+      "main": [
+        [
+          {
+            "node": "Decidir espera do lote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Localizar invoice no ZIP do ML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar diagnóstico": {
+      "main": [
+        [
+          {
+            "node": "Uma NF por vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decidir espera do lote": {
+      "main": [
+        [
+          {
+            "node": "Espera do lote?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Espera do lote?": {
+      "main": [
+        [
+          {
+            "node": "Esperar 10 min o envio FTP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Esperar 2 min após contingência",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rechecar FTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar relatórios do lote": {
+      "main": [
+        [
+          {
+            "node": "Avisar Google Chat (furo)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar e-mail (furo)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar WhatsApp (furo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir pendências do lote": {
+      "main": [
+        [
+          {
+            "node": "Esperar 2 min (conferência)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ainda faltam no FTP?": {
+      "main": [
+        [
+          {
+            "node": "Esperar 2 min (conferência)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Montar relatórios do lote",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Relatório de conferência do lote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar 2 min (conferência)": {
+      "main": [
+        [
+          {
+            "node": "Rechecar FTP (conferência)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rechecar FTP (conferência)": {
+      "main": [
+        [
+          {
+            "node": "Montar relatórios do lote",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Relatório de conferência do lote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Relatório de conferência do lote": {
+      "main": [
+        [
+          {
+            "node": "Avisar Google Chat (lote)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar e-mail (lote)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avisar WhatsApp (lote)",
             "type": "main",
             "index": 0
           }

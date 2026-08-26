@@ -27,7 +27,7 @@ Resposta (campos relevantes):
 | `series[].tetoMl` | Último número **autorizado no ML** na janela |
 | `series[].ultimaMlNoFtp` | `true` se o teto está no FTP; `false` se falta; `null` se o teto não foi consultado |
 | `series[].pulos` | Furos de `nota_inicial` até o teto |
-| `notasAusentes` | Lista expandida (limite 40) |
+| `notasAusentes` | Lista completa dos números ausentes no FTP |
 | `integracaoOk` | Sem furos (e sem `FAKE_NOTA`) |
 | `tetoPeriodo` | `{ start, end }` `AAAAMMDD` |
 
@@ -76,9 +76,11 @@ Body JSON:
 }
 ```
 
-`executarContigencia` default `true`; só dispara se **não** houver notificação no gateway.
+`executarContigencia` default `true`; só dispara se **não** houver notificação no gateway. Se alguma consulta SQL falhar, a contingência **não** dispara: o relatório traz o rastro com `ERRO:` na tabela que quebrou.
 
-A espera de 2/10 min **não** ocorre neste handler — o n8n usa nós Wait e depois `POST /diagnostico/entrega`.
+A espera de 2/10 min **não** ocorre neste handler — o n8n usa nós Wait e depois `POST /diagnostico/entrega`. A resposta inclui `rastro` (tabela, filtro, linhas, ids, status).
+
+## `POST /diagnostico/entrega` · `GET /diagnostico/entrega`
 
 ## `POST /diagnostico/entrega` · `GET /diagnostico/entrega`
 

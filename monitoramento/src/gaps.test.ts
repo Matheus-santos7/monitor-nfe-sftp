@@ -77,6 +77,21 @@ test("analisa só as séries configuradas e expande notas", () => {
   assert.deepEqual(expandirNotas([s2]), [{ numero: 2632, serie: 2 }]);
 });
 
+test("expandirNotas lista todos os furos; limite opcional só para cards", () => {
+  const base = {
+    serie: 2,
+    cnpj: "x",
+    total: 1,
+    min: 1,
+    max: 60,
+    pulos: [{ inicio: 1, fim: 50, qtd: 50 }],
+    totalAusentes: 50,
+  };
+  assert.equal(expandirNotas([base]).length, 50);
+  assert.equal(expandirNotas([base], 10).length, 10);
+  assert.equal(expandirNotas([base])[49].numero, 50);
+});
+
 test("teto ML marca a última emitida ausente no FTP e completa a sequência até ela", () => {
   const arquivos = [
     `NFe-${chaveNfe(2, 2630)}.xml`,

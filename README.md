@@ -8,8 +8,8 @@ O n8n agenda e notifica. Um serviço Node (`monitor-sftp`) consulta o SFTP, o re
 
 1. Lista os XMLs no SFTP e baixa o relatório fiscal do Mercado Livre (ZIP do dia).
 2. Usa a **última NF autorizada de cada série** como teto da sequência — não o último arquivo do FTP.
-3. Se faltar número: localiza o `invoice_id` no ZIP, consulta o gateway (notificação → invoice → entrega FTP) e monta um relatório passo a passo.
-4. Se o Mercado Livre não notificou o gateway, simula o payload de `invoices` (contingência), espera no n8n e reconsulta.
+3. Se faltar número: localiza o `invoice_id` no ZIP, consulta o gateway (aviso ML → Nerus → envio FTP) e monta um relatório com resultado, causa e o que fazer.
+4. Se o Mercado Livre não avisou o sistema, dispara a contingência, espera no n8n e reconsulta. Se o XML aparecer no FTP, o aviso sai como resolvido.
 
 Detalhe do fluxo: [docs/fluxo.md](docs/fluxo.md) · HTTP: [docs/api.md](docs/api.md) · decisões: [docs/decisions/](docs/decisions/).
 
@@ -17,7 +17,7 @@ Detalhe do fluxo: [docs/fluxo.md](docs/fluxo.md) · HTTP: [docs/api.md](docs/api
 
 | Peça | Papel |
 |---|---|
-| n8n | Agenda (seg–sex 8h/12h/15h/17h, America/Sao_Paulo), Wait, Chat / e-mail / WhatsApp |
+| n8n | Agenda (seg–sex, de hora em hora das 8h às 18h, America/Sao_Paulo), Wait, Chat / e-mail / WhatsApp |
 | monitor-sftp | SFTP, OAuth ML, ZIP de NF-e, SSH → MySQL, contingência |
 | PostgreSQL | Banco **do n8n** (não é o banco fiscal) |
 

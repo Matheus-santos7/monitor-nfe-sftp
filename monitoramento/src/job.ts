@@ -76,7 +76,7 @@ export async function executarJob(
     }
 
     const forcado = aplicarFakeNota(
-      expandirNotas(resultados, 40),
+      expandirNotas(resultados),
       integracaoCompleta(resultados),
       process.env.FAKE_NOTA,
     );

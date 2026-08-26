@@ -106,7 +106,7 @@ export function analisarSeries(
   });
 }
 
-export function expandirNotas(resultados: ResultadoSerie[], limite = 40): {
+export function expandirNotas(resultados: ResultadoSerie[], limite?: number): {
   numero: number;
   serie: number;
 }[] {
@@ -115,7 +115,7 @@ export function expandirNotas(resultados: ResultadoSerie[], limite = 40): {
     for (const pulo of r.pulos) {
       for (let n = pulo.inicio; n <= pulo.fim; n++) {
         notas.push({ numero: n, serie: r.serie });
-        if (notas.length >= limite) return notas;
+        if (limite != null && notas.length >= limite) return notas;
       }
     }
   }

@@ -71,6 +71,7 @@ async function responderEntrega(
       entregas: estado.entregas,
       entregaEnviada: entrega === "enviada",
       classificacaoEntrega: entrega,
+      rastro: estado.rastro,
     });
   } catch (erro) {
     console.error(`▶ Entrega Nerus falhou: ${msgErro(erro)}`);
