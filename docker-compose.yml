@@ -133,6 +133,11 @@ services:
       ML_TETO_DIAS: ${ML_TETO_DIAS:-1}
       ML_TOKENS_PATH: /app/data/ml-tokens.json
       ML_ENV_PATH: /app/.env.host
+      MONITOR_DB_HOST: postgres
+      MONITOR_DB_PORT: "5432"
+      MONITOR_DB_DATABASE: ${POSTGRES_DB}
+      MONITOR_DB_USER: ${POSTGRES_NON_ROOT_USER}
+      MONITOR_DB_PASSWORD: ${POSTGRES_NON_ROOT_PASSWORD}
       NERUS_TENANT_ID: ${NERUS_TENANT_ID:-}
       NERUS_SSH_HOST: ${NERUS_SSH_HOST:-}
       NERUS_SSH_PORT: ${NERUS_SSH_PORT:-22}
@@ -151,6 +156,9 @@ services:
       - ./monitoramento/data:/app/data
       - ./.env:/app/.env.host
       - ${NERUS_SSH_KEY_HOST_PATH:-./secrets/bastion.pem}:/run/secrets/bastion.pem:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8081:8080"
     extra_hosts:

@@ -80,7 +80,7 @@ Body JSON:
 
 A espera de 2/10 min **não** ocorre neste handler — o n8n usa nós Wait e depois `POST /diagnostico/entrega`. A resposta inclui `rastro` (tabela, filtro, linhas, ids, status).
 
-## `POST /diagnostico/entrega` · `GET /diagnostico/entrega`
+A resposta também traz `diagnosticoId`: o UUID da linha gravada em `monitor.diagnosticos`. É `null` quando o histórico está desligado (sem `MONITOR_DB_HOST`) ou quando a gravação falhou — o diagnóstico em si não é afetado. Guarde esse id e devolva em `/diagnostico/entrega` para fechar o caso no histórico.
 
 ## `POST /diagnostico/entrega` · `GET /diagnostico/entrega`
 
@@ -90,8 +90,40 @@ Reconsulta invoice + `fiscal_document_deliveries`. Prefira **POST** (chave NF-e 
 {
   "invoiceId": "1000000001",
   "chave": "35260800000000000191…",
-  "mlUserId": "1000000000"
+  "mlUserId": "1000000000",
+  "diagnosticoId": "9f1c…"
 }
 ```
 
+`diagnosticoId` é opcional. Quando vem, o mesmo registro do `POST /diagnostico` é **atualizado** (não cria uma segunda linha) com o desfecho: `resolvido`, `em_andamento` ou `precisa_atencao`. Sem ele, a rota se comporta como antes — útil para debug avulso. No GET, passe como querystring.
+
 GET ainda funciona para debug local; não use a chave na URL em produção.
+
+## `GET /historico`
+
+Agregados das execuções e diagnósticos gravados em Postgres (schema `monitor`, ver [ADR-004](decisions/0004-historico-no-postgres-do-n8n.md)).
+
+Query: `dias` (padrão **7**).
+
+`503` quando o histórico está desligado (`MONITOR_DB_HOST` vazio).
+
+```bash
+curl "http://127.0.0.1:8081/historico?dias=7"
+```
+
+```json
+{
+  "ok": true,
+  "periodo": { "dias": 7, "desde": "2026-08-21", "ate": "2026-08-28" },
+  "execucoes": { "total": 56, "comFuro": 3, "integracaoOkPct": 94.6 },
+  "diagnosticos": { "total": 5, "resolvidos": 4, "precisaAtencao": 1 },
+  "serieMaisAfetada": { "serie": 2, "totalAusentesSomado": 7 }
+}
+```
+
+| Campo | Significado |
+|---|---|
+| `execucoes.comFuro` | Execuções com `integracaoOk = false` (inclui as forçadas por `FAKE_NOTA`) |
+| `execucoes.integracaoOkPct` | `(total - comFuro) / total`, uma casa decimal |
+| `diagnosticos.resolvidos` | Só conta o que foi fechado via `/diagnostico/entrega` com `diagnosticoId` |
+| `serieMaisAfetada` | Série com maior soma de ausentes na janela; `null` se não houve furo |

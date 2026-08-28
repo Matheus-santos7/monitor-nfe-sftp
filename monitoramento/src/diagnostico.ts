@@ -413,11 +413,21 @@ function oQueMonitorFez(
   return "Não reenviou o aviso: o problema não é falta de notificação do Mercado Livre.";
 }
 
+/** Mesmo desfecho do banner, em forma de rótulo — é o que vai para o histórico. */
+export type ResultadoFinal = "resolvido" | "em_andamento" | "precisa_atencao";
+
 function resultadoHumano(opts: {
   xmlNoFtp: boolean | null;
   proximaAcao: ProximaAcao;
   entregaAposEspera: ExtraConclusao["classificacaoEntregaAposEspera"];
-}): { banner: string; oQueFazer: string; assuntoSufixo: string; resolvido: boolean; precisaAdmin: boolean } {
+}): {
+  banner: string;
+  oQueFazer: string;
+  assuntoSufixo: string;
+  resolvido: boolean;
+  precisaAdmin: boolean;
+  categoria: ResultadoFinal;
+} {
   if (opts.xmlNoFtp === true) {
     return {
       banner: "✅ Resolvido — o XML da nota já está no FTP.",
@@ -425,6 +435,7 @@ function resultadoHumano(opts: {
       assuntoSufixo: "resolvido",
       resolvido: true,
       precisaAdmin: false,
+      categoria: "resolvido",
     };
   }
   if (opts.xmlNoFtp === false && opts.entregaAposEspera === "enviada") {
@@ -434,6 +445,7 @@ function resultadoHumano(opts: {
       assuntoSufixo: "envio em andamento",
       resolvido: false,
       precisaAdmin: true,
+      categoria: "em_andamento",
     };
   }
   if (opts.xmlNoFtp === false) {
@@ -443,6 +455,7 @@ function resultadoHumano(opts: {
       assuntoSufixo: "ainda ausente no FTP",
       resolvido: false,
       precisaAdmin: true,
+      categoria: "precisa_atencao",
     };
   }
   if (opts.proximaAcao === "contigencia") {
@@ -452,6 +465,7 @@ function resultadoHumano(opts: {
       assuntoSufixo: "Mercado Livre não avisou",
       resolvido: false,
       precisaAdmin: true,
+      categoria: "precisa_atencao",
     };
   }
   if (opts.proximaAcao === "esperar_entrega") {
@@ -461,6 +475,7 @@ function resultadoHumano(opts: {
       assuntoSufixo: "aguardando envio ao FTP",
       resolvido: false,
       precisaAdmin: true,
+      categoria: "em_andamento",
     };
   }
   if (opts.proximaAcao === "rechecar_ftp") {
@@ -470,6 +485,7 @@ function resultadoHumano(opts: {
       assuntoSufixo: "conferir FTP",
       resolvido: false,
       precisaAdmin: false,
+      categoria: "em_andamento",
     };
   }
   return {
@@ -478,6 +494,7 @@ function resultadoHumano(opts: {
     assuntoSufixo: "precisa de atenção",
     resolvido: false,
     precisaAdmin: true,
+    categoria: "precisa_atencao",
   };
 }
 
@@ -485,7 +502,13 @@ function resultadoHumano(opts: {
 export function concluirRelatorio(
   r: Omit<RelatorioDiagnostico, "assunto" | "mensagem">,
   extra: ExtraConclusao = {},
-): { assunto: string; mensagem: string; precisaAdmin: boolean; resolvido: boolean } {
+): {
+  assunto: string;
+  mensagem: string;
+  precisaAdmin: boolean;
+  resolvido: boolean;
+  resultadoFinal: ResultadoFinal;
+} {
   const xmlNoFtp = extra.xmlNoFtp ?? null;
   const resultado = resultadoHumano({
     xmlNoFtp,
@@ -529,6 +552,7 @@ export function concluirRelatorio(
     mensagem: linhas.join("\n"),
     precisaAdmin: resultado.precisaAdmin,
     resolvido: resultado.resolvido,
+    resultadoFinal: resultado.categoria,
   };
 }
 

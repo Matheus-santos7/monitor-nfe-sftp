@@ -2,7 +2,7 @@
 set -e
 
 # Roda só na primeira inicialização do volume do Postgres.
-# Cria o usuário de aplicação (não-root) e o schema isolado do n8n.
+# Cria o usuário de aplicação (não-root) e os schemas isolados do n8n e do monitor.
 
 if [ -n "${POSTGRES_NON_ROOT_USER:-}" ] && [ -n "${POSTGRES_NON_ROOT_PASSWORD:-}" ]; then
   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
@@ -11,6 +11,8 @@ if [ -n "${POSTGRES_NON_ROOT_USER:-}" ] && [ -n "${POSTGRES_NON_ROOT_PASSWORD:-}
     GRANT CREATE ON SCHEMA public TO ${POSTGRES_NON_ROOT_USER};
     CREATE SCHEMA IF NOT EXISTS n8n AUTHORIZATION ${POSTGRES_NON_ROOT_USER};
     GRANT ALL ON SCHEMA n8n TO ${POSTGRES_NON_ROOT_USER};
+    CREATE SCHEMA IF NOT EXISTS monitor AUTHORIZATION ${POSTGRES_NON_ROOT_USER};
+    GRANT ALL ON SCHEMA monitor TO ${POSTGRES_NON_ROOT_USER};
   EOSQL
 else
   echo "SETUP INFO: POSTGRES_NON_ROOT_USER / POSTGRES_NON_ROOT_PASSWORD não definidos."

@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { carregarConfig } from "./config.js";
+import { iniciarBanco } from "./db.js";
 import { iniciarHttp } from "./http.js";
 import { executarJob } from "./job.js";
 
@@ -17,6 +18,7 @@ function formatarProxima(data: Date | null): string {
 
 async function main(): Promise<void> {
   const config = carregarConfig();
+  await iniciarBanco();
   iniciarHttp(config);
 
   if (config.executar_ao_iniciar) {

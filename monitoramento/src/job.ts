@@ -4,6 +4,7 @@ import { listarArquivosFtp } from "./sftp.js";
 import { enviarWebhooks, montarEventoPainel, montarPayload } from "./webhook.js";
 import { credenciaisMlConfiguradas } from "./ml-auth.js";
 import { buscarTetosPorSerie } from "./ml-invoices.js";
+import { persistirExecucao } from "./db.js";
 import type { AppConfig, ResultadoSerie, TetoMl } from "./types.js";
 
 export type ResultadoJob = {
@@ -86,13 +87,16 @@ export async function executarJob(
       );
     }
 
-    return {
+    const resultado: ResultadoJob = {
       identificador,
       series: resultados,
       integracaoOk: forcado.integracaoOk,
       notasAusentes: forcado.notasAusentes,
       tetoPeriodo: janelaTeto,
     };
+    // persistirExecucao já engole os próprios erros: histórico nunca derruba a checagem.
+    await persistirExecucao(resultado);
+    return resultado;
   } finally {
     emAndamento = false;
   }

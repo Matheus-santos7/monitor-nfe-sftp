@@ -1,8 +1,22 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import type { AppConfig } from "./types.js";
 import { executarJob, jobOcupado } from "./job.js";
 import { localizarInvoicePorNf, listarNotasAutorizadas, tetosPorSerie, validarUsuarioMl } from "./ml-invoices.js";
-import { consultarEstadoNerus, diagnosticarNota, classificarEntregas } from "./diagnostico.js";
+import {
+  consultarEstadoNerus,
+  diagnosticarNota,
+  classificarEntregas,
+  concluirRelatorio,
+  type RelatorioDiagnostico,
+} from "./diagnostico.js";
+import {
+  atualizarDiagnostico,
+  bancoConfigurado,
+  buscarDiagnostico,
+  consultarHistorico,
+  persistirDiagnostico,
+} from "./db.js";
 
 function msgErro(erro: unknown): string {
   return erro instanceof Error ? erro.message : String(erro);
@@ -27,13 +41,82 @@ function tokenMonitor(config: AppConfig): string | undefined {
   return env || cfg || undefined;
 }
 
+/**
+ * Compara duas strings em tempo constante, para não vazar por timing
+ * quanto do token está correto. Tamanhos diferentes já respondem falso,
+ * mas só depois de comparar contra um buffer do mesmo tamanho do esperado
+ * (evita atalho de curto-circuito revelando o tamanho certo do token).
+ */
+function iguaisSemTiming(recebido: string, esperado: string): boolean {
+  const bufEsperado = Buffer.from(esperado, "utf8");
+  const bufRecebido = Buffer.from(recebido, "utf8");
+  if (bufRecebido.length !== bufEsperado.length) {
+    // ainda assim compara algo de tamanho igual para manter o tempo estável
+    timingSafeEqual(bufEsperado, bufEsperado);
+    return false;
+  }
+  return timingSafeEqual(bufRecebido, bufEsperado);
+}
+
 function autorizado(req: IncomingMessage, token?: string, url?: URL): boolean {
   if (!token) return true;
   const header = req.headers.authorization;
-  if (header === `Bearer ${token}`) return true;
-  if (req.headers["x-token"] === token) return true;
-  if (url?.searchParams.get("token") === token) return true;
+  if (typeof header === "string" && header.startsWith("Bearer ") && iguaisSemTiming(header.slice(7), token)) {
+    return true;
+  }
+  const xToken = req.headers["x-token"];
+  if (typeof xToken === "string" && iguaisSemTiming(xToken, token)) return true;
+  const qToken = url?.searchParams.get("token");
+  if (typeof qToken === "string" && iguaisSemTiming(qToken, token)) return true;
   return false;
+}
+
+// ---- Rate limit de tentativas de autenticação inválidas ----
+// Protege contra tentativa de adivinhar o token por força bruta.
+// Não limita requisições autorizadas — só falhas de auth.
+const JANELA_MS = 5 * 60 * 1000;
+const MAX_FALHAS = 20;
+const tentativasPorIp = new Map<string, { falhas: number; desde: number }>();
+
+function ipDoRequest(req: IncomingMessage): string {
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.trim()) return xff.split(",")[0]!.trim();
+  return req.socket.remoteAddress || "desconhecido";
+}
+
+function bloqueadoPorFalhas(ip: string): boolean {
+  const registro = tentativasPorIp.get(ip);
+  if (!registro) return false;
+  if (Date.now() - registro.desde > JANELA_MS) {
+    tentativasPorIp.delete(ip);
+    return false;
+  }
+  return registro.falhas >= MAX_FALHAS;
+}
+
+function registrarFalhaAuth(ip: string): void {
+  const registro = tentativasPorIp.get(ip);
+  if (!registro || Date.now() - registro.desde > JANELA_MS) {
+    tentativasPorIp.set(ip, { falhas: 1, desde: Date.now() });
+    return;
+  }
+  registro.falhas += 1;
+}
+
+/** true = seguiu em frente; false = já respondeu (bloqueado ou não autorizado). */
+function checarAuth(req: IncomingMessage, res: ServerResponse, config: AppConfig, url: URL): boolean {
+  const token = tokenMonitor(config);
+  const ip = ipDoRequest(req);
+  if (token && bloqueadoPorFalhas(ip)) {
+    json(res, 429, { ok: false, erro: "muitas tentativas de autenticação inválidas — aguarde alguns minutos" });
+    return false;
+  }
+  if (!autorizado(req, token, url)) {
+    if (token) registrarFalhaAuth(ip);
+    json(res, 401, { ok: false, erro: "token inválido" });
+    return false;
+  }
+  return true;
 }
 
 async function lerJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -44,14 +127,47 @@ async function lerJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
+/**
+ * Fecha no histórico o diagnóstico aberto pelo POST /diagnostico. O desfecho vem
+ * de concluirRelatorio — a mesma função que monta o texto — para não existirem
+ * duas versões da decisão.
+ */
+async function fecharDiagnostico(
+  diagnosticoId: string,
+  estado: Awaited<ReturnType<typeof consultarEstadoNerus>>,
+  entrega: ReturnType<typeof classificarEntregas>,
+): Promise<void> {
+  try {
+    const anterior = await buscarDiagnostico(diagnosticoId);
+    if (!anterior) return;
+    const atualizado: RelatorioDiagnostico = {
+      ...anterior,
+      entregaEnviada: entrega === "enviada",
+      invoice: estado.invoice,
+      entregas: estado.entregas,
+      rastro: estado.rastro,
+    };
+    const final = concluirRelatorio(atualizado, { classificacaoEntregaAposEspera: entrega });
+    await atualizarDiagnostico(diagnosticoId, final.resultadoFinal, {
+      ...atualizado,
+      precisaAdmin: final.precisaAdmin,
+      assunto: final.assunto,
+      mensagem: final.mensagem,
+    });
+  } catch (erro) {
+    console.error(`▶ Histórico: falha ao fechar o diagnóstico ${diagnosticoId}: ${msgErro(erro)}`);
+  }
+}
+
 async function responderEntrega(
   res: ServerResponse,
-  params: { invoiceId: string; chave?: string | null; mlUserId?: string },
+  params: { invoiceId: string; chave?: string | null; mlUserId?: string; diagnosticoId?: string },
 ): Promise<void> {
   const invoiceId = String(params.invoiceId ?? "").trim();
   const chave = params.chave ? String(params.chave) : null;
   const mlUserId = params.mlUserId || process.env.ML_USER_ID || "";
   const tenantId = process.env.NERUS_TENANT_ID || "";
+  const diagnosticoId = params.diagnosticoId?.trim();
   if (!invoiceId) {
     json(res, 400, { ok: false, erro: "informe invoiceId" });
     return;
@@ -64,6 +180,7 @@ async function responderEntrega(
       tenantId,
     });
     const entrega = classificarEntregas(estado.entregas);
+    if (diagnosticoId) await fecharDiagnostico(diagnosticoId, estado, entrega);
     json(res, 200, {
       ok: true,
       notificacaoRecebida: Boolean(estado.notificacao),
@@ -82,7 +199,7 @@ async function responderEntrega(
   }
 }
 
-export function iniciarHttp(config: AppConfig): void {
+export function iniciarHttp(config: AppConfig): ReturnType<typeof createServer> {
   const porta = Number(process.env.PORT ?? config.http?.porta ?? 8080);
   const host = "0.0.0.0";
 
@@ -95,8 +212,7 @@ export function iniciarHttp(config: AppConfig): void {
     }
 
     if (url.pathname === "/executar" && (req.method === "POST" || req.method === "GET")) {
-      if (!autorizado(req, tokenMonitor(config), url)) {
-        json(res, 401, { ok: false, erro: "token inválido" });
+      if (!checarAuth(req, res, config, url)) {
         return;
       }
 
@@ -120,8 +236,7 @@ export function iniciarHttp(config: AppConfig): void {
     }
 
     if (url.pathname === "/ml/me" && req.method === "GET") {
-      if (!autorizado(req, tokenMonitor(config), url)) {
-        json(res, 401, { ok: false, erro: "token inválido" });
+      if (!checarAuth(req, res, config, url)) {
         return;
       }
       try {
@@ -139,8 +254,7 @@ export function iniciarHttp(config: AppConfig): void {
     }
 
     if (url.pathname === "/ml/invoice" && req.method === "GET") {
-      if (!autorizado(req, tokenMonitor(config), url)) {
-        json(res, 401, { ok: false, erro: "token inválido" });
+      if (!checarAuth(req, res, config, url)) {
         return;
       }
       const numero = Number(url.searchParams.get("numero"));
@@ -169,8 +283,7 @@ export function iniciarHttp(config: AppConfig): void {
     }
 
     if (url.pathname === "/ml/teto" && req.method === "GET") {
-      if (!autorizado(req, tokenMonitor(config), url)) {
-        json(res, 401, { ok: false, erro: "token inválido" });
+      if (!checarAuth(req, res, config, url)) {
         return;
       }
       try {
@@ -206,8 +319,7 @@ export function iniciarHttp(config: AppConfig): void {
     }
 
     if (url.pathname === "/diagnostico" && req.method === "POST") {
-      if (!autorizado(req, tokenMonitor(config), url)) {
-        json(res, 401, { ok: false, erro: "token inválido" });
+      if (!checarAuth(req, res, config, url)) {
         return;
       }
       try {
@@ -228,7 +340,8 @@ export function iniciarHttp(config: AppConfig): void {
           mlUserId: body.mlUserId ? String(body.mlUserId) : undefined,
           executarContigencia: body.executarContigencia !== false,
         });
-        json(res, 200, { ok: true, ...relatorio });
+        const diagnosticoId = await persistirDiagnostico(relatorio);
+        json(res, 200, { ok: true, ...relatorio, diagnosticoId });
       } catch (erro) {
         console.error(`▶ Diagnóstico Nerus falhou: ${msgErro(erro)}`);
         json(res, 500, {
@@ -240,8 +353,7 @@ export function iniciarHttp(config: AppConfig): void {
     }
 
     if (url.pathname === "/diagnostico/entrega" && (req.method === "GET" || req.method === "POST")) {
-      if (!autorizado(req, tokenMonitor(config), url)) {
-        json(res, 401, { ok: false, erro: "token inválido" });
+      if (!checarAuth(req, res, config, url)) {
         return;
       }
       if (req.method === "POST") {
@@ -251,6 +363,7 @@ export function iniciarHttp(config: AppConfig): void {
           invoiceId: String(body.invoiceId ?? ""),
           chave: body.chave ? String(body.chave) : null,
           mlUserId: body.mlUserId ? String(body.mlUserId) : undefined,
+          diagnosticoId: body.diagnosticoId ? String(body.diagnosticoId) : undefined,
         });
       } else {
         logPasso(`Rechecar entrega no Nerus (invoice ${url.searchParams.get("invoiceId") ?? ""})`);
@@ -258,7 +371,31 @@ export function iniciarHttp(config: AppConfig): void {
           invoiceId: url.searchParams.get("invoiceId") ?? "",
           chave: url.searchParams.get("chave"),
           mlUserId: url.searchParams.get("mlUserId") || undefined,
+          diagnosticoId: url.searchParams.get("diagnosticoId") || undefined,
         });
+      }
+      return;
+    }
+
+    if (url.pathname === "/historico" && req.method === "GET") {
+      if (!checarAuth(req, res, config, url)) {
+        return;
+      }
+      if (!bancoConfigurado()) {
+        json(res, 503, { ok: false, erro: "histórico desativado — defina MONITOR_DB_HOST" });
+        return;
+      }
+      const dias = Number(url.searchParams.get("dias") ?? 7);
+      if (!Number.isFinite(dias) || dias <= 0) {
+        json(res, 400, { ok: false, erro: "dias deve ser um número maior que zero" });
+        return;
+      }
+      try {
+        logPasso(`Resumir histórico dos últimos ${Math.floor(dias)} dia(s)`);
+        json(res, 200, { ok: true, ...(await consultarHistorico(dias)) });
+      } catch (erro) {
+        console.error(`▶ Histórico falhou: ${msgErro(erro)}`);
+        json(res, 500, { ok: false, erro: msgErro(erro) });
       }
       return;
     }
@@ -266,11 +403,12 @@ export function iniciarHttp(config: AppConfig): void {
     json(res, 404, {
       ok: false,
       erro:
-        "use GET /health, POST /executar, GET /ml/me, GET /ml/invoice, GET /ml/teto, POST /diagnostico ou POST /diagnostico/entrega",
+        "use GET /health, POST /executar, GET /ml/me, GET /ml/invoice, GET /ml/teto, POST /diagnostico, POST /diagnostico/entrega ou GET /historico",
     });
   });
 
   server.listen(porta, host, () => {
     console.log(`▶ monitor-sftp pronto :${porta}`);
   });
+  return server;
 }
