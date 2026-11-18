@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { conferirLote, rodarCiclo, type DepsCiclo } from "./ciclo.js";
+import { conferirLote, contingenciaLigada, rodarCiclo, type DepsCiclo } from "./ciclo.js";
 import type { ResultadoJob } from "./job.js";
 import type { RelatorioDiagnostico } from "./diagnostico.js";
 import { relatorioNota } from "./relatorio.js";
@@ -123,4 +123,18 @@ test("relatório do lote: contingência segurada pela trava não diz 'não é fa
   );
   assert.match(r.mensagem, /já reenviado às 10:05/);
   assert.doesNotMatch(r.mensagem, /não é falta de notificação/);
+});
+
+test("contingência só liga com CONTINGENCIA=on explícito; vazio ou ausente = desligada", () => {
+  const antes = process.env.CONTINGENCIA;
+  try {
+    for (const [v, esperado] of [[undefined, false], ["", false], ["  ", false], ["off", false], ["ligado", false], ["on", true], ["ON", true], ["true", true], ["1", true]] as const) {
+      if (v === undefined) delete process.env.CONTINGENCIA;
+      else process.env.CONTINGENCIA = v;
+      assert.equal(contingenciaLigada(), esperado, `CONTINGENCIA=${JSON.stringify(v)}`);
+    }
+  } finally {
+    if (antes === undefined) delete process.env.CONTINGENCIA;
+    else process.env.CONTINGENCIA = antes;
+  }
 });

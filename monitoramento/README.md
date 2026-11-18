@@ -13,7 +13,7 @@ cp config.example.yml config.yml
 ## Testes
 
 ```bash
-npm test
+npm run check   # typecheck + testes (o CI roda o mesmo)
 ```
 
 ## HTTP

@@ -28,6 +28,11 @@ services:
     networks:
       - n8n
 
+  monitor-sftp:
+    environment:
+      # Contingência real (renotifica o gateway fiscal) só aqui. Para desligar em produção: CONTINGENCIA=off no .env.
+      CONTINGENCIA: ${CONTINGENCIA:-on}
+
   n8n:
     labels:
       - traefik.enable=true

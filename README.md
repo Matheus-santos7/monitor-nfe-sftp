@@ -35,6 +35,12 @@ n8n (agenda, Wait, envia mensagens[])
 
 ## Subir localmente
 
+> ⚠️ **Antes do primeiro `up`:**
+> - Deixe `CONTINGENCIA=off`, que é o padrão do `.env.example`. Com `on`, o monitor renotifica o gateway fiscal **de verdade**, e não existe staging.
+> - **Nunca** use o `ML_REFRESH_TOKEN` da produção. Ele é de uso único: a primeira renovação na sua máquina derruba a VPS. Deixe vazio ou use um token próprio.
+>
+> O log de subida mostra o modo: `Contingência desligada` ou `LIGADA`.
+
 ```bash
 cp .env.example .env          # preencha segredos — nunca commite
 cp monitoramento/config.example.yml monitoramento/config.yml
@@ -67,10 +73,20 @@ No editor, ative **1. Monitor SFTP NF-e (ciclo)** — toda a regra fica no monit
 | `docker compose up` | Sobe o stack; o log mostra só os passos do fluxo |
 | `docker compose up -d --build monitor-sftp` | Rebuild do monitor |
 | `curl -H "Authorization: Bearer $MONITOR_HTTP_TOKEN" http://127.0.0.1:8081/status` | Resultado da última checagem do painel |
-| `cd monitoramento && npm test` | Testes do monitor |
+| `cd monitoramento && npm run check` | Typecheck e testes (o mesmo que o CI roda) |
 | http://localhost:8081/painel?token=$MONITOR_HTTP_TOKEN | Painel em tempo real (checa a cada `PAINEL_INTERVALO_MIN`, padrão 5; `0` desliga). Não envia avisos — quem avisa é o n8n |
 
-Produção (VPS): overlay Traefik em `docker-compose.prod.yml`. Bind HTTP em `0.0.0.0:$PORT`. Disco do container é efêmero — não grave XML local.
+Produção (VPS): **siga [docs/deploy.md](docs/deploy.md)**. Ele cobre deploy, troca de workflow na ordem certa, teste de fumaça, rollback e recuperação do token do ML. O overlay `docker-compose.prod.yml` liga o Traefik e a contingência (`CONTINGENCIA=on`).
+
+## Mudanças comuns
+
+| Quero… | Onde | Como validar |
+|---|---|---|
+| Mudar o texto de um aviso | `monitoramento/src/relatorio.ts` (resumo, lote, conferência) e `concluirRelatorio` em `diagnostico.ts` (diagnóstico de uma NF) | `cd monitoramento && npm run check`. Os testes em `ciclo.test.ts` e `diagnostico.test.ts` comparam trechos do texto |
+| Adicionar uma série | `series[]` no `monitoramento/config.yml`. `nota_inicial` é a primeira NF que precisa estar no FTP; as anteriores são ignoradas | `docker compose restart monitor-sftp` e conferir a série no painel |
+| Mudar uma regra de decisão | `decidirAcao` em `diagnostico.ts`, `rodarCiclo` em `ciclo.ts` | escreva o teste primeiro e rode `npm run check` |
+| Ver um furo sem esperar um de verdade | `FAKE_NOTA=99999/2` no `.env`, com `CONTINGENCIA=off` | recrie o monitor, confira o painel e depois volte `FAKE_NOTA=` para vazio |
+| Colocar em produção | [docs/deploy.md](docs/deploy.md) | o CI (`.github/workflows/ci.yml`) roda typecheck e testes em todo PR |
 
 ## Configuração
 
@@ -84,7 +100,7 @@ Tudo que identifica o cliente fica no `.env` e no `config.yml` (ambos fora do Gi
 | `MONITOR_HTTP_TOKEN` | Bearer entre n8n e o monitor. **Obrigatório**: sem ele o monitor recusa tudo (exceto `/health`) |
 | `ML_TETO_CACHE_MIN` | Minutos que o ZIP do ML (teto) fica em cache; padrão 5. Suba se aparecer 429 |
 | `PAINEL_INTERVALO_MIN` | Intervalo da checagem silenciosa do painel (min). `0` desliga |
-| `CONTINGENCIA` | `off` diagnostica sem renotificar o gateway (homologação, testes ao vivo). Produção: `on` |
+| `CONTINGENCIA` | Só `on` renotifica o gateway. Vazio = `off`. O `docker-compose.prod.yml` liga em produção; em qualquer outro lugar fica `off` |
 | `FAKE_NOTA` | Ex.: `1000/1` força um furo de teste; vazio em produção |
 
 Depois de mudar o `.env`: `docker compose up -d --force-recreate monitor-sftp n8n`.

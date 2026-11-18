@@ -28,7 +28,7 @@ A sessão Dev Team de 2026-11-18 (`docs/team-sessions/`) classificou isso como b
 - `status` = `ok` · `degradado` (sem furo visível, mas com a checagem cega) · `alerta`.
 - O workflow (`workflows/monitor-sftp.json`) não tem nenhum nó Code. São só gatilho, `/ciclo`, Wait, `/ciclo/conferir`, Split Out e os envios.
 - O nó `/ciclo` **não** tem nova tentativa automática: repetir o pedido repetiria a contingência.
-- `CONTINGENCIA=off` diagnostica sem renotificar. Use para homologação e testes ao vivo.
+- A contingência só liga com `CONTINGENCIA=on` explícito, e só o `docker-compose.prod.yml` define esse valor. Vazio ou ausente = desligada, para que rodar local com credenciais reais não aja em produção.
 - Falha no diagnóstico de uma NF não derruba mais o ciclo inteiro. A NF entra no lote com o erro.
 
 ## Alternatives considered

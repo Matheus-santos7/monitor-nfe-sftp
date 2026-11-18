@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main, developer]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: monitoramento
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: monitoramento/package-lock.json
+      - run: npm ci
+      # tsx (npm test) não checa tipos: o typecheck roda separado.
+      - run: npm run typecheck
+      - run: npm test
+      - name: Workflows n8n são JSON válido
+        working-directory: .
+        run: for f in workflows/*.json; do node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" || exit 1; done

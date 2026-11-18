@@ -5,6 +5,7 @@
 | [../README.md](../README.md) | Visão geral, quick start, segredos, armadilhas |
 | [fluxo.md](fluxo.md) | Checagem → diagnóstico → contingência → relatório |
 | [api.md](api.md) | HTTP do `monitor-sftp` |
+| [deploy.md](deploy.md) | Deploy, troca de workflow, rollback e recuperação do token ML |
 | [../PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) | Contexto resumido (propósito, stack, regra, fase, "pronto") para sessões de análise |
 | [team-sessions/](team-sessions/) | Registros das sessões Dev Team (PM/Arq/Dev/QA) |
 | [decisions/0001-relatorio-zip-em-vez-de-search.md](decisions/0001-relatorio-zip-em-vez-de-search.md) | Por que o ZIP, não `/invoices/search` |

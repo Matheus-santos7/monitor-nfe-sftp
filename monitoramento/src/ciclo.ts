@@ -37,9 +37,12 @@ export function depsReais(cfg: AppConfig): DepsCiclo {
   };
 }
 
-/** CONTINGENCIA=off → diagnostica mas não renotifica (homologação / testes ao vivo). */
+/**
+ * Só renotifica o gateway com CONTINGENCIA=on explícito (só o docker-compose.prod.yml liga).
+ * Vazio, ausente ou qualquer outro valor = desligado: rodar local com credencial real não age em produção.
+ */
 export function contingenciaLigada(): boolean {
-  return !/^(off|false|0|no)$/i.test(process.env.CONTINGENCIA?.trim() ?? "");
+  return /^(on|true|1|yes|sim)$/i.test(process.env.CONTINGENCIA?.trim() ?? "");
 }
 
 export type ResultadoCiclo = {
