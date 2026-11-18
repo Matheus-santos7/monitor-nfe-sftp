@@ -1,4 +1,4 @@
-# Camada de serviço: monitor-sftp
+# Camada de serviço: o backend (`api`)
 
 O monitor é um serviço Node 22 em TypeScript, com `http` nativo e sem framework, em `monitoramento/`. Ele faz toda a regra: checa, diagnostica, decide, monta os textos e serve o painel. O contrato HTTP está em [api.md](api.md). Esta página mostra **onde fica cada coisa** e **como mudar com segurança**.
 
@@ -8,7 +8,7 @@ O monitor é um serviço Node 22 em TypeScript, com `http` nativo e sem framewor
 |---|---|
 | `index.ts` | Subida: carrega a config, retoma o histórico, sobe o HTTP, inicia a checagem do painel e loga o modo da contingência |
 | `config.ts` · `types.ts` | Lê o `config.yml` (`CONFIG_PATH`) e define os tipos compartilhados |
-| `http.ts` | Rotas, autenticação (Bearer, fecha sem token), leitura e validação do corpo (`lerNotas`, `lerLote`), códigos de erro |
+| `http.ts` | Rotas e autenticação em dois níveis (`permissao`: operação/leitura, fecha sem token, só header) |
 | `ciclo.ts` | **Orquestra o ciclo:** `rodarCiclo` (status, diagnóstico de cada NF, espera) e `conferirLote` |
 | `job.ts` | **A checagem:** SFTP + teto ML + furos. Fila que serializa as checagens, estado do painel, gravação do histórico |
 | `gaps.ts` · `chave.ts` | Agrupa os arquivos por série, lê a chave/inutilização do nome do arquivo e calcula os furos. Funções puras |
@@ -20,11 +20,10 @@ O monitor é um serviço Node 22 em TypeScript, com `http` nativo e sem framewor
 | `nerus-contigencia.ts` | Login na API do Nerus, renotificação e trava de 30 min por invoice |
 | `relatorio.ts` | Textos dos avisos: resumo, série sem XML, relatório por NF, resumo do lote. Funções puras |
 | `historico.ts` | Arquivo JSON por dia, resumo de saúde (`resumirDia`) |
-| `painel.ts` | O HTML do painel, numa string. O JS dele lê `/status` e `/historico` |
 | `orquestrador.ts` | **Ciclo completo:** ciclo → espera do lote → conferência (→ 2 min → de novo) → avisos; aviso de falha; uma rodada por vez; modo da agenda |
 | `avisos.ts` | Envio para Google Chat, WhatsApp (`fetch`) e e-mail (SMTP, `nodemailer`). Cada canal é independente |
 
-As integrações (SFTP, ML e Nerus) estão detalhadas em [integracoes.md](integracoes.md), e o painel em [painel.md](painel.md).
+O frontend (`painel/index.html`, servido por nginx) fica fora deste serviço; veja [painel.md](painel.md). As integrações (SFTP, ML e Nerus) estão em [integracoes.md](integracoes.md).
 
 ## Caminho de um ciclo
 
@@ -58,7 +57,7 @@ orquestrador.ts  executarCicloCompleto
 |---|---|
 | `off` | Monitor pausado: nada é agendado e o "Executar agora" fica desligado. O painel continua checando |
 | `sombra` (padrão local) | No horário de `AGENDA_CICLO`, roda o ciclo completo **sem contingência** e **sem enviar avisos** (só log e painel) |
-| `ativo` (padrão na VPS, via `docker-compose.prod.yml`) | Agenda, espera, confere e avisa de verdade |
+| `ativo` (no servidor, via `.env`) | Agenda, espera, confere e avisa de verdade |
 
 - **Agenda:** `node-cron` com `AGENDA_CICLO` (padrão `0 8-18 * * 1-5`, fuso America/Sao_Paulo). Se o horário chega com uma rodada ainda em andamento (por exemplo, na espera de 10 min), a nova é pulada, com log.
 - **Avisos:** `avisos.ts`. O Chat recebe `{text}`, o WhatsApp `{number, text}`, e o e-mail vai com assunto e texto puro. Um canal sem variável é pulado. Se nenhum canal entregar um aviso, isso vira um evento no histórico e aparece no painel.

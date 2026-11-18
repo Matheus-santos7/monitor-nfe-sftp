@@ -12,7 +12,7 @@ Comece pelo [README da raiz](../README.md): visão geral, glossário, como rodar
 | Entender um erro de SFTP, Mercado Livre ou Nerus | [integracoes.md](integracoes.md) |
 | Ler o painel ou o histórico do dia | [painel.md](painel.md) |
 | Chamar o monitor pela HTTP | [api.md](api.md) |
-| Subir em produção, voltar uma versão ou recuperar o token do ML | [deploy.md](deploy.md) |
+| Subir no servidor AWS, ver logs, migrar, voltar uma versão ou recuperar o token do ML | [deploy.md](deploy.md) |
 | Saber por que algo foi feito assim | [decisions/](decisions/) |
 
 ## Camadas
@@ -22,9 +22,9 @@ Comece pelo [README da raiz](../README.md): visão geral, glossário, como rodar
 | Regra de negócio | [regra-de-negocio.md](regra-de-negocio.md) | `gaps.ts`, `diagnostico.ts` (`decidirAcao`), `ciclo.ts`, `relatorio.ts` |
 | Serviço monitor (ciclo, agenda, avisos) | [monitor.md](monitor.md) | `monitoramento/src/` (`orquestrador.ts`, `avisos.ts`, `index.ts`) |
 | Integrações | [integracoes.md](integracoes.md) | `sftp.ts`, `ml-auth.ts`, `ml-invoices.ts`, `nerus-db.ts`, `nerus-contigencia.ts` |
-| Visualização | [painel.md](painel.md) | `painel.ts`, `historico.ts`, `job.ts` |
+| Visualização (frontend) | [painel.md](painel.md) | `painel/index.html`, `painel/nginx.conf`, `historico.ts`, `job.ts` |
 | Contrato HTTP | [api.md](api.md) | `http.ts` |
-| Infra e operação | [deploy.md](deploy.md) | `docker-compose*.yml`, `.env.example`, `.github/workflows/ci.yml` |
+| Infra e operação (AWS) | [deploy.md](deploy.md) | `docker-compose.yml`, `Caddyfile`, `.env.example`, `.github/workflows/ci.yml` |
 
 ## Decisões (ADRs)
 
@@ -35,6 +35,7 @@ Comece pelo [README da raiz](../README.md): visão geral, glossário, como rodar
 | [0003](decisions/0003-diagnostico-via-ssh-mysql.md) | Diagnóstico no MySQL do Nerus via bastion SSH. A parte de orquestração foi substituída pelo ADR-004 |
 | [0004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md) | A regra fica no monitor (`/ciclo`); o n8n só agenda, espera e avisa |
 | [0005](decisions/0005-agenda-e-avisos-no-monitor.md) | O monitor agenda, espera e avisa; o n8n saiu do projeto |
+| [0006](decisions/0006-um-compose-painel-separado-e-https.md) | Um compose (api, painel, proxy Caddy), um DNS por serviço com HTTPS, tokens de operação e leitura |
 
 ADRs são registro histórico: não se reescrevem, só se substituem por um novo.
 

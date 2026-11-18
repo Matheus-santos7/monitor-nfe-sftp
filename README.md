@@ -7,7 +7,9 @@ Detecta NF-e autorizada no Mercado Livre que **ainda não chegou ao SFTP do clie
 ## Como funciona
 
 ```
-monitor-sftp  (um serviço só: agenda seg–sex 8h–18h, regra, avisos e painel)
+proxy (Caddy, HTTPS) ── https://PAINEL_HOST → painel (frontend) · https://API_HOST → api (backend)
+
+api  (agenda seg–sex 8h–18h, regra, avisos)
   ├─ SFTP do cliente ........ quais XMLs chegaram
   ├─ Mercado Livre .......... última NF autorizada (teto) e invoice_id
   ├─ Nerus (MySQL via SSH) .. onde a nota parou; API de contingência
@@ -41,8 +43,9 @@ monitoramento/        serviço Node 22 + TypeScript (a regra inteira)
   config.example.yml  modelo do config.yml (cliente, SFTP, séries)
 docs/                 documentação por camada (ver abaixo)
 secrets/              chave SSH do bastion (fora do Git)
-docker-compose.yml    stack base (local e VPS)
-docker-compose.prod.yml  overlay da VPS: agenda ativa + contingência ligada
+docker-compose.yml    o projeto inteiro: api, painel e proxy
+painel/               frontend: index.html + nginx.conf
+Caddyfile             proxy HTTPS: um DNS por serviço
 .env.example          modelo do .env (segredos, fora do Git)
 .github/workflows/    CI: typecheck + testes em todo PR
 ```
@@ -61,14 +64,15 @@ cp monitoramento/config.example.yml monitoramento/config.yml
 # chave SSH do bastion em secrets/bastion.pem (chmod 600), se for diagnosticar no Nerus
 
 docker compose up -d --build
-docker compose logs --tail 20 monitor-sftp
+docker compose logs -f            # os três serviços; Ctrl+C sai sem parar nada
 ```
 
-**Deu certo se** o log mostra `monitor-sftp pronto :8080`, `Contingência desligada` e `Agenda do ciclo em SOMBRA`, e o painel abre:
+**Deu certo se** o log da `api` mostra `monitor-sftp pronto :8080`, `Contingência desligada` e `Agenda do ciclo em SOMBRA`, e o painel abre:
 
 | Serviço | URL |
 |---|---|
-| Painel | http://localhost:8081/painel?token=SEU_MONITOR_HTTP_TOKEN |
+| Painel (frontend) | http://localhost:8080/?token=SEU_MONITOR_HTTP_TOKEN · ou https://painel.localhost/?token=… (certificado local) |
+| API (backend) | http://localhost:8081/health · ou https://api.localhost/health |
 
 No painel, o botão **Executar agora** roda o ciclo inteiro em sombra, e os avisos aparecem só no log.
 
@@ -79,7 +83,7 @@ Testes: `cd monitoramento && npm run check`, com typecheck e testes, o mesmo que
 | Quero… | Onde | Como validar |
 |---|---|---|
 | Mudar o texto de um aviso | `monitoramento/src/relatorio.ts` (resumo, lote, conferência) e `concluirRelatorio` em `diagnostico.ts` (diagnóstico de uma NF) | `npm run check`. Os testes de `ciclo.test.ts` e `diagnostico.test.ts` conferem trechos do texto |
-| Adicionar uma série | `series[]` no `monitoramento/config.yml`. `nota_inicial` = primeira NF que precisa estar no FTP | `docker compose restart monitor-sftp` e conferir a série no painel |
+| Adicionar uma série | `series[]` no `monitoramento/config.yml`. `nota_inicial` = primeira NF que precisa estar no FTP | `docker compose restart api` e conferir a série no painel |
 | Mudar uma regra de decisão | `decidirAcao` em `diagnostico.ts`, `rodarCiclo` em `ciclo.ts` | Escreva o teste primeiro e depois rode `npm run check` |
 | Ver um furo sem esperar um real | `FAKE_NOTA=99999/2` no `.env`, com `CONTINGENCIA=off` | Recrie o monitor, confira o painel e volte para vazio |
 | Mudar o horário do ciclo | `AGENDA_CICLO` no `.env` (cron, fuso SP) | Recrie o monitor; o painel mostra o próximo horário |
@@ -92,21 +96,23 @@ Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, am
 
 | Variável | Uso |
 |---|---|
-| `MONITOR_HTTP_TOKEN` | Token do painel e da API. **Obrigatório**: sem ele, o monitor recusa tudo, menos `/health` |
-| `CONTINGENCIA` | Só `on` renotifica. Vazio = desligada. O `docker-compose.prod.yml` liga na VPS; não defina no `.env` |
+| `MONITOR_HTTP_TOKEN` | Token de **operação** (time técnico: painel + Executar agora). **Obrigatório**: sem ele, a API recusa tudo, menos `/health` |
+| `PAINEL_TOKEN` | Token de **leitura** (time e cliente: painel e histórico, sem o botão) |
+| `PAINEL_HOST` / `API_HOST` | Os DNS do painel e da API (o Caddy emite o HTTPS). Local: `painel.localhost` / `api.localhost` |
+| `CONTINGENCIA` | Só `on` renotifica. Vazio = desligada. **Só no servidor:** `CONTINGENCIA=on` |
 | `ML_CLIENT_ID` / `ML_CLIENT_SECRET` / `ML_REFRESH_TOKEN` / `ML_USER_ID` | OAuth e seller do ML. O refresh é de uso único |
 | `NERUS_*` | SSH, MySQL e API do gateway (diagnóstico e contingência) |
 | `ML_TETO_CACHE_MIN` | Cache do ZIP do ML, em minutos (padrão 5). Suba se aparecer 429 |
 | `PAINEL_INTERVALO_MIN` | Checagem do painel, em minutos (padrão 5; `0` desliga) |
 | `FAKE_NOTA` | Força um furo de teste. Vazio em produção |
-| `MODO_AGENDA` / `AGENDA_CICLO` | Agenda do ciclo: `sombra` localmente, `ativo` na VPS (via `docker-compose.prod.yml`); `off` pausa. Ver [docs/monitor.md](docs/monitor.md#agenda-e-avisos) |
+| `MODO_AGENDA` / `AGENDA_CICLO` | Agenda do ciclo: padrão `sombra`; **no servidor** `MODO_AGENDA=ativo`; `off` pausa. Ver [docs/monitor.md](docs/monitor.md#agenda-e-avisos) |
 | Canais de aviso | `GOOGLE_CHAT_WEBHOOK_URL`, `WHATSAPP_WEBHOOK_URL` + `WHATSAPP_TO`, `SMTP_*` + `ALERT_EMAIL_*`. Canal vazio = não envia por ele |
 
-Depois de mudar o `.env`: `docker compose up -d --force-recreate monitor-sftp`. Depois de mudar o `config.yml`: `docker compose restart monitor-sftp`.
+Depois de mudar o `.env`: `docker compose up -d --force-recreate api`. Depois de mudar o `config.yml`: `docker compose restart api`.
 
 ## Produção
 
-Siga **[docs/deploy.md](docs/deploy.md)**: acessos, o que nunca fazer, deploy, a primeira vez sem n8n, rollback e recuperação do token do ML. Na VPS, o overlay `docker-compose.prod.yml` é obrigatório: é ele que liga a agenda e a contingência. Coloque `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml` no `.env` do servidor.
+Siga **[docs/deploy.md](docs/deploy.md)**: servidor AWS (Elastic IP, Security Group, DNS), `.env` do servidor (`MODO_AGENDA=ativo`, `CONTINGENCIA=on`, hosts, os dois tokens), subida, logs, migração do servidor antigo, rollback e recuperação do token do ML. É o mesmo `docker-compose.yml` local e no servidor: o que muda é só o `.env`.
 
 ## Problemas comuns
 
@@ -115,9 +121,11 @@ Siga **[docs/deploy.md](docs/deploy.md)**: acessos, o que nunca fazer, deploy, a
 | `EISDIR` na subida | Faltava `.env`, `config.yml` ou `bastion.pem`, e o Docker criou uma **pasta** no lugar | Apague a pasta, copie o `.example` e suba de novo |
 | `401` "defina MONITOR_HTTP_TOKEN" | Token ausente no `.env` | Gere com `openssl rand -hex 32` e recrie o monitor |
 | `Cannot parse privateKey` | `secrets/bastion.pem` vazio ou inválido | Coloque a chave real (`chmod 600`) |
-| Painel "Checagem incompleta", aviso "Teto ML indisponível" | ML fora, 429 ou token do ML inválido | 429: suba `ML_TETO_CACHE_MIN`. Token morto: [deploy.md](docs/deploy.md#5-o-token-do-mercado-livre-morreu) |
-| Painel "Painel sem conexão com o monitor" | Container parado ou token errado na URL | `docker compose ps` e confira o `?token=` |
-| Log diz `Contingência desligada` ou `SOMBRA` na VPS | Subiu sem o overlay de produção, ou o `.env` define `CONTINGENCIA`/`MODO_AGENDA` | Use `COMPOSE_FILE` (seção Produção), tire as variáveis do `.env` e recrie |
+| Painel "Checagem incompleta", aviso "Teto ML indisponível" | ML fora, 429 ou token do ML inválido | 429: suba `ML_TETO_CACHE_MIN`. Token morto: [deploy.md](docs/deploy.md#6-o-token-do-mercado-livre-morreu) |
+| Painel "Painel sem conexão com o monitor" ou 401 | Container parado ou token errado no link | `docker compose ps` e confira o `?token=` |
+| Cliente não vê o botão **Executar agora** | Esperado: o `PAINEL_TOKEN` é só de leitura | Para operar, use o link com `MONITOR_HTTP_TOKEN` (só o time técnico) |
+| Caddy: erro de ACME / certificado | DNS ainda não aponta para o servidor, ou portas 80/443 fechadas | Confira o registro A e o Security Group; o Caddy tenta de novo sozinho |
+| Log diz `Contingência desligada` ou `SOMBRA` no servidor | Falta `CONTINGENCIA=on` / `MODO_AGENDA=ativo` no `.env` | Ajuste o `.env` e `docker compose up -d --force-recreate api` |
 | Painel "SEM ENTREGA em nenhum canal" | Webhook ou SMTP errado ou fora | Veja o log `▶ Aviso não entregue em …` e corrija a variável |
 | NF "não encontrada no relatório do Mercado Livre" | A NF não está no ZIP do mês (número errado ou nota de outra conta) | Confira a NF no ML; o time técnico investiga |
 

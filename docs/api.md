@@ -1,21 +1,27 @@
-# API do monitor (`monitor-sftp`)
+# API do monitor (serviço `api`)
 
 Contrato HTTP do monitor. O código fica em `monitoramento/src/http.ts`; os módulos por trás de cada rota estão em [monitor.md](monitor.md).
 
-Host local: `http://127.0.0.1:8081` (o container escuta `0.0.0.0:8080`). Em produção, acesse por túnel SSH.
+No servidor: `https://API_HOST` (via proxy HTTPS). No próprio servidor ou local: `http://127.0.0.1:8081` (`API_PORTA`). O painel (`https://PAINEL_HOST`) repassa só `/status`, `/historico`, `/ciclo/agora` e `/health`.
 
 | Rota | Token | Quem chama | Efeito |
 |---|---|---|---|
 | `GET /health` | não | Docker / você | Vivo? Não toca em nada externo |
-| `GET /painel` | sim (`?token=` aceito) | navegador | A página do painel |
-| `GET /status` | sim | painel | Última checagem, em memória |
-| `GET /historico?dia=` | sim | painel | Histórico e saúde do dia |
-| `POST /ciclo/agora` | sim | botão do painel | Ciclo completo em segundo plano. **Em `ativo`, pode disparar contingência real** |
-| `GET /ml/teto` | sim | você (depuração) | Só leitura (ZIP do ML) |
+| `GET /status` | leitura | painel | Última checagem, em memória, e a `permissao` do token |
+| `GET /historico?dia=` | leitura | painel | Histórico e saúde do dia |
+| `POST /ciclo/agora` | **operação** | botão do painel | Ciclo completo em segundo plano. **Em `ativo`, pode disparar contingência real** |
+| `GET /ml/teto` | **operação** | você (depuração) | Só leitura (ZIP do ML) |
 
 Toda resposta JSON tem `ok: true|false`. Em erro, ela traz `erro: "<mensagem>"`. Uma rota inexistente responde 404, com a lista de rotas.
 
-Autenticação: `MONITOR_HTTP_TOKEN` no `.env` (preferido) ou `http.token` em `config.yml`. Envie `Authorization: Bearer {token}` ou `X-Token`. `?token=` só é aceito em `/painel` (para abrir no navegador; a página responde com `Referrer-Policy: no-referrer` e chama `/status` e `/historico` com o header). **Sem token configurado, todas as rotas exceto `/health` respondem 401** — o `POST /ciclo/agora` pode disparar contingência real.
+Autenticação, **só por header** (`Authorization: Bearer {token}` ou `X-Token`). Token na URL não vale na API.
+
+| Token | Nível | Rotas |
+|---|---|---|
+| `MONITOR_HTTP_TOKEN` (ou `http.token` no `config.yml`) | operação | todas |
+| `PAINEL_TOKEN` | leitura | `/status`, `/historico`. Nas de operação, a resposta é **403** |
+
+**Sem `MONITOR_HTTP_TOKEN` configurado, todas as rotas, menos `/health`, respondem 401** (o Executar agora pode disparar contingência real). Um token desconhecido também recebe 401.
 
 ## `POST /ciclo/agora`
 
@@ -34,9 +40,9 @@ Com `MODO_AGENDA=sombra`, roda sem contingência e não envia avisos.
 { "ok": true, "ocupado": false }
 ```
 
-## `GET /painel` · `GET /status`
+## `GET /status`
 
-`/painel?token=...` é a página; ela lê `/status` a cada 1 min. `/status` devolve o estado da última checagem em memória: `ocupado`, `intervaloMin`, `cliente`, `ciclo` (modo da agenda, próximo horário, etapa em andamento, resultado do último ciclo), `status` (`ok` · `alerta` · `erro` · `aguardando`), `checadoEm`, `erro`, `avisos[]`, `resultado` (tabela abaixo) e `ausentesDesde` (`"numero/serie"` → ISO da primeira checagem em que o furo apareceu). O estado zera quando o container reinicia. Se já houver uma checagem em andamento, a próxima espera ela terminar.
+O painel lê `/status` a cada 1 min. `/status` devolve `permissao` (`leitura` ou `operacao`), o estado da última checagem em memória: `ocupado`, `intervaloMin`, `cliente`, `ciclo` (modo da agenda, próximo horário, etapa em andamento, resultado do último ciclo), `status` (`ok` · `alerta` · `erro` · `aguardando`), `checadoEm`, `erro`, `avisos[]`, `resultado` (tabela abaixo) e `ausentesDesde` (`"numero/serie"` → ISO da primeira checagem em que o furo apareceu). O estado zera quando o container reinicia. Se já houver uma checagem em andamento, a próxima espera ela terminar.
 
 Campos de `resultado`:
 

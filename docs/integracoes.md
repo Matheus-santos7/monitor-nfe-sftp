@@ -2,6 +2,8 @@
 
 O monitor conversa com três sistemas de fora. Todos são de produção: não existe ambiente de teste de nenhum deles.
 
+O servidor precisa ter o **IP de saída liberado** no SFTP do cliente e no bastion do Nerus ([deploy.md](deploy.md#antes-de-começar)).
+
 | Sistema | Para quê | Módulos | Se cair |
 |---|---|---|---|
 | SFTP do cliente | Saber quais XMLs chegaram | `sftp.ts`, `chave.ts`, `gaps.ts` | A checagem falha → aviso de falha nos canais e painel "Checagem falhou" |
@@ -28,7 +30,7 @@ O monitor conversa com três sistemas de fora. Todos são de produção: não ex
   2. O próprio `.env`, montado no container como `/app/.env.host`.
 - Consequências práticas:
   - **Nunca rode localmente com o refresh token da produção.** A primeira renovação local mata o da VPS.
-  - Para trocar o token à mão, atualize o `.env` **e** apague o `ml-tokens.json`, senão o arquivo antigo vence. O procedimento completo está em [deploy.md](deploy.md#5-o-token-do-mercado-livre-morreu).
+  - Para trocar o token à mão, atualize o `.env` **e** apague o `ml-tokens.json`, senão o arquivo antigo vence. O procedimento completo está em [deploy.md](deploy.md#6-o-token-do-mercado-livre-morreu).
 - Variáveis: `ML_CLIENT_ID`, `ML_CLIENT_SECRET`, `ML_ACCESS_TOKEN`, `ML_REFRESH_TOKEN`, `ML_USER_ID` (o seller).
 
 ### Relatório ZIP de NF-e

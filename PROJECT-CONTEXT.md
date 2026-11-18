@@ -9,8 +9,8 @@ Detectar NF-e autorizada no Mercado Livre que ainda não chegou ao SFTP do clien
 ## Stack
 
 - **monitor-sftp** — Node 22 + TypeScript, `http` nativo, sem framework. Lê SFTP (`ssh2-sftp-client`), relatório ZIP de NF-e do ML (OAuth com refresh de uso único), MySQL do gateway via túnel SSH (`ssh2` + `mysql2`).
-- **Painel** — HTML único servido pelo monitor (`/painel`), checagem silenciosa a cada `PAINEL_INTERVALO_MIN`, histórico por dia em `data/historico/AAAAMMDD.json`.
-- Docker Compose com um serviço só; produção em VPS (monitor não exposto, acesso por túnel). Agenda (`node-cron`) e avisos (Chat, e-mail via SMTP, WhatsApp) no próprio monitor.
+- **Painel** — frontend estático (nginx, `painel/`), checagem silenciosa a cada `PAINEL_INTERVALO_MIN`, histórico por dia em `data/historico/AAAAMMDD.json`.
+- Um `docker-compose.yml` com três serviços: `api` (backend), `painel` (frontend) e `proxy` (Caddy, HTTPS, um DNS por serviço). Produção num servidor Linux da AWS do setor. Agenda (`node-cron`) e avisos (Chat, e-mail via SMTP, WhatsApp) no backend. Dois tokens: operação (time técnico) e leitura (time e cliente).
 - Testes: `node:test` via `tsx` (`npm test`).
 
 ## Regra de negócio central

@@ -1,108 +1,132 @@
-# Deploy, operação e recuperação
+# Deploy no servidor AWS, operação e recuperação
 
-Não existe staging. Cada passo abaixo age no cliente real. Siga a ordem e não pule a verificação no final de cada etapa.
+O projeto inteiro sobe com **um** `docker-compose.yml` e é acompanhado com `docker compose logs`. Não existe staging: o servidor age no cliente real. Siga a ordem e não pule as verificações.
+
+## Como está montado
+
+```
+Internet ── 443/80 ──► proxy (Caddy, HTTPS automático)
+                          ├─ https://PAINEL_HOST ──► painel (nginx)  ── /status, /historico, /ciclo/agora ──► api
+                          └─ https://API_HOST    ──► api (Node)      ── SFTP, Mercado Livre, Nerus, avisos
+```
+
+| Serviço | Container | Porta no servidor | Papel |
+|---|---|---|---|
+| `api` | `monitor-api` | `127.0.0.1:8081` (`API_PORTA`) | Backend: API, agenda do ciclo, avisos |
+| `painel` | `monitor-painel` | `127.0.0.1:8080` (`PAINEL_PORTA`) | Frontend: painel e histórico |
+| `proxy` | `monitor-proxy` | `80` e `443`, públicas | HTTPS e um DNS por serviço |
+
+As portas 8080 e 8081 só aceitam conexão do próprio servidor (para `curl` ou túnel SSH). De fora, o acesso é sempre pelo proxy, com HTTPS.
+
+**Quem acessa o quê:**
+
+| Quem | Link | Pode |
+|---|---|---|
+| Time técnico | `https://PAINEL_HOST/?token=<MONITOR_HTTP_TOKEN>` | Ver tudo e usar o **Executar agora** |
+| Time e cliente | `https://PAINEL_HOST/?token=<PAINEL_TOKEN>` | Ver o painel e o histórico. O botão não aparece, e a API recusa com 403 |
+| Integrações e scripts | `https://API_HOST/…`, com `Authorization: Bearer <token>` | Conforme o token |
 
 ## Antes de começar
 
-Você precisa de:
-
-| Acesso | Para quê |
+| Item | Por quê |
 |---|---|
-| SSH na VPS | rebuild do monitor e leitura dos logs |
-| `.env` e `monitoramento/config.yml` da VPS | ficam só no servidor, nunca no Git |
-| App do Mercado Livre (client id e secret) | só para recuperar o token (ver o fim desta página) |
-
-Se faltar algum desses acessos, pare e peça ao responsável pelo projeto. Não tente contornar.
-
-## Como a infraestrutura está montada
-
-É um serviço só, o `monitor-sftp`, em Docker Compose. Cada cliente tem a sua instalação (pasta, `.env`, `config.yml`).
-
-| Arquivo | Quando entra | O que define |
-|---|---|---|
-| `docker-compose.yml` | sempre, local e na VPS | O `monitor-sftp`, com a porta só em `127.0.0.1:8081`. Padrões seguros: `MODO_AGENDA=sombra` e `CONTINGENCIA=off` |
-| `docker-compose.prod.yml` | só na VPS, junto com o base | `MODO_AGENDA=ativo` (agenda e avisos de verdade) e `CONTINGENCIA=on` |
-
-Na VPS, ponha `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml` no `.env`. Com isso, todo `docker compose …` usa os dois arquivos. Sem o overlay, o monitor roda em sombra, sem avisar ninguém, e **sem dar erro nenhum**.
-
-O que fica no disco do host, fora do Git:
-
-| Caminho no host | No container | Conteúdo |
-|---|---|---|
-| `.env` | variáveis + `/app/.env.host` | Segredos. O monitor também grava ali o token do ML renovado |
-| `monitoramento/config.yml` | `/app/config.yml` (só leitura) | Cliente, SFTP, séries |
-| `monitoramento/data/` | `/app/data` | `historico/AAAAMMDD.json`, `ml-tokens.json` (token do ML, com prioridade sobre o `.env`) e `contingencias.json` (trava) |
-| `secrets/bastion.pem` (ou `NERUS_SSH_KEY_HOST_PATH`) | `/run/secrets/bastion.pem` | Chave SSH do bastion do Nerus, `chmod 600` |
-
-**Esses arquivos precisam existir antes do `up`.** Se faltar um deles, o Docker cria uma **pasta** com o mesmo nome, e o monitor falha com `EISDIR`. Apague a pasta, copie o `.example` e suba de novo.
+| Servidor Linux com Docker Engine e o plugin compose v2 (`docker compose version`) | Roda tudo |
+| **IP fixo (Elastic IP)** no servidor | DNS e liberação de IP |
+| **Esse IP liberado no SFTP do cliente e no bastion SSH do Nerus** | Esses dois costumam aceitar só IPs conhecidos. Sem liberação, o monitor não lista os XMLs nem diagnostica |
+| Dois registros DNS do tipo A, `PAINEL_HOST` e `API_HOST`, apontando para o IP | O Caddy só emite o certificado se o nome já resolver para o servidor |
+| Security Group: entrada **80 e 443** (de qualquer lugar, se o cliente acessa de fora); **22** só da rede do setor. **Não** abra 8080/8081 | HTTPS público; o resto fechado |
+| Saída liberada: 443 (Mercado Livre, Let's Encrypt, Nerus API, webhooks), 22 (SFTP e bastion), 587/465 (SMTP) | O monitor fala com tudo isso |
+| O `.env`, o `config.yml`, a chave `bastion.pem` e a pasta `monitoramento/data/` do servidor atual | Credenciais, histórico e o token do ML em uso |
 
 ## Nunca faça
 
-- **Nunca use o `ML_REFRESH_TOKEN` da produção na sua máquina.** O refresh é de uso único: a primeira renovação local invalida o da VPS, e a produção fica sem o teto do ML.
-- **Nunca rode dois monitores agendando para o mesmo cliente**, por exemplo dois servidores ou duas pastas. A contingência e os avisos sairiam em dobro. A trava de 30 min por invoice é só uma rede de proteção.
-- **Nunca coloque `MODO_AGENDA=ativo` ou `CONTINGENCIA=on` fora da VPS.** Os padrões locais são `sombra` e `off`, e só o `docker-compose.prod.yml` liga os dois.
-- **Nunca use o "Executar agora" em produção para "testar".** Ele roda o ciclo de verdade. Para testar, use a sua máquina (etapa 1).
+- **Nunca deixe dois servidores rodando o monitor do mesmo cliente** (o antigo e o novo). O token do ML é de uso único, e os dois brigariam por ele. A contingência e os avisos sairiam em dobro.
+- **Nunca use o `ML_REFRESH_TOKEN` da produção na sua máquina.** A primeira renovação local invalida o do servidor.
+- **Nunca mande o token de operação para o cliente.** Para ele, use só o `PAINEL_TOKEN`.
+- **Nunca coloque `MODO_AGENDA=ativo` ou `CONTINGENCIA=on` fora do servidor.**
+- **Nunca abra 8080/8081 no Security Group.** Elas não têm HTTPS.
 
-## 1. Validar a mudança na sua máquina
-
-```bash
-cd monitoramento && npm run check     # typecheck + testes (o CI roda o mesmo)
-cd .. && docker compose up -d --build monitor-sftp
-docker compose logs --tail 20 monitor-sftp   # "Contingência desligada" e "Agenda do ciclo em SOMBRA"
-```
-
-Abra `http://localhost:8081/painel?token=<MONITOR_HTTP_TOKEN do seu .env>`. O **Executar agora** roda o ciclo inteiro em sombra: diagnostica, espera, confere e mostra os avisos no log, sem enviar.
-
-Para ver um furo sem esperar um de verdade:
+## 1. Instalação no servidor (primeira vez)
 
 ```bash
-FAKE_NOTA=99999/2 docker compose up -d --force-recreate monitor-sftp   # série do seu config.yml, número que não existe
-# painel: a NF 99999/2 aparece ausente; Executar agora → log "▶ [sombra] aviso não enviado: …"
-docker compose up -d --force-recreate monitor-sftp                     # volta ao normal
+ssh <servidor>
+git clone <repositório> monitor-nfe && cd monitor-nfe
+cp .env.example .env && chmod 600 .env
+cp monitoramento/config.example.yml monitoramento/config.yml
+mkdir -p secrets && cp <bastion.pem> secrets/bastion.pem && chmod 600 secrets/bastion.pem
 ```
 
-## 2. Deploy na VPS
+No `.env`, além das credenciais (ML, Nerus, SFTP no `config.yml`, canais de aviso):
+
+```
+MODO_AGENDA=ativo
+CONTINGENCIA=on
+PAINEL_HOST=monitor.seusetor.com.br
+API_HOST=api-monitor.seusetor.com.br
+MONITOR_HTTP_TOKEN=<openssl rand -hex 32>   # operação, só o time técnico
+PAINEL_TOKEN=<openssl rand -hex 32>         # leitura, time e cliente (diferente do de cima)
+```
+
+Se estiver vindo de outro servidor, faça antes a **seção 4 (migração)**.
+
+## 2. Subir e verificar
 
 ```bash
-ssh <vps>
-cd <pasta do projeto>
-git fetch && git checkout <commit ou tag aprovado>
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans
-docker compose logs --tail 20 monitor-sftp
+docker compose up -d --build
+docker compose ps                 # api, painel e proxy "running" / "healthy"
+docker compose logs -f            # Ctrl+C sai sem parar nada
 ```
 
-Verifique:
+O que precisa aparecer nos logs:
 
-- O log mostra `monitor-sftp pronto`, `Contingência LIGADA` e `Agenda do ciclo ATIVA`. Se não mostrar "nenhum canal de aviso configurado", os canais estão definidos. Se aparecer "desligada" ou "SOMBRA", o overlay não entrou, ou o `.env` da VPS define `CONTINGENCIA` ou `MODO_AGENDA`: corrija antes de seguir.
-- `curl -s http://127.0.0.1:8081/health` responde `{"ok":true,...}`.
-- `curl -s -H "Authorization: Bearer $MONITOR_HTTP_TOKEN" http://127.0.0.1:8081/status` responde 200. Um 401 com a mensagem "defina MONITOR_HTTP_TOKEN" quer dizer que falta o token no `.env`.
-- Painel: abra um túnel com `ssh -L 8081:127.0.0.1:8081 <vps>` e acesse `http://localhost:8081/painel?token=...` no seu navegador. A seção "Ciclo de monitoramento" deve mostrar "ativa" e o próximo horário.
-- Na próxima hora cheia, o painel mostra o "Último ciclo", e os avisos chegam nos canais.
+- `monitor-api`: `monitor-sftp pronto`, `Contingência LIGADA` e `Agenda do ciclo ATIVA`. Não pode aparecer "nenhum canal de aviso configurado". Se aparecer "desligada" ou "SOMBRA", falta `CONTINGENCIA=on` ou `MODO_AGENDA=ativo` no `.env`.
+- `monitor-proxy`: `certificate obtained successfully` para os dois nomes. Se aparecer um erro de ACME, o DNS ainda não aponta para o servidor, ou a porta 80/443 está fechada.
 
-Mudou só o `config.yml`, por exemplo uma série nova? Rode `docker compose restart monitor-sftp`, sem rebuild. Mudou o `.env`? Rode `up -d --force-recreate monitor-sftp`.
+Testes:
 
-**Pausar o monitor** (manutenção do gateway, por exemplo): coloque `MODO_AGENDA=off` no `.env` e recrie. Para manter os avisos e só desligar a contingência, use `CONTINGENCIA=off`.
+```bash
+curl -s https://API_HOST/health                                               # {"ok":true,...}
+curl -s -H "Authorization: Bearer $PAINEL_TOKEN" https://API_HOST/status | head -c 200
+```
 
-## 3. Primeira vez sem n8n (servidor que ainda roda o n8n)
+Depois abra `https://PAINEL_HOST/?token=<MONITOR_HTTP_TOKEN>`. A seção "Ciclo de monitoramento" deve mostrar "ativa" e o próximo horário. Use o **Executar agora** e confira que os avisos chegam nos canais.
 
-Siga isto uma vez, no servidor que ainda tem os containers `n8n`, `n8n-postgres` e `n8n-traefik`.
+## 3. Operação do dia a dia
 
-1. **Antes do deploy:**
-   - Copie a credencial SMTP do n8n (Credentials) para `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` e `SMTP_PASS` no `.env`. Confira também `GOOGLE_CHAT_WEBHOOK_URL`, `WHATSAPP_*` e `ALERT_EMAIL_*`, que já estavam no `.env`.
-   - Tire do `.env` qualquer `MODO_AGENDA` e `CONTINGENCIA` que impeçam os padrões de produção.
-   - Se quiser guardar o histórico de execuções do n8n, exporte agora pelo editor.
-2. Faça o deploy da etapa 2. O `--remove-orphans` **para e remove os containers** do n8n, do Postgres e do Traefik, que não estão mais no compose. Isso evita dois agendadores. Depois, confira com `docker ps` que só sobrou o `n8n-monitor-sftp`.
-3. Rode **Executar agora** no painel e confira se os avisos chegam nos três canais.
-4. Os volumes `n8n_n8n_data`, `n8n_postgres_data` e `n8n_traefik_data` continuam no disco. Depois de uma semana estável, apague-os se quiser: `docker volume rm …`.
+| Quero… | Comando |
+|---|---|
+| Ver os logs ao vivo | `docker compose logs -f`, ou só um serviço: `docker compose logs -f api` |
+| Ver a última hora | `docker compose logs --since 1h api` |
+| Ver o estado dos containers | `docker compose ps` |
+| Atualizar para uma versão nova | `git pull && docker compose up -d --build` |
+| Aplicar uma mudança no `.env` | `docker compose up -d --force-recreate api` (ou `proxy`, se mudou `PAINEL_HOST`/`API_HOST`) |
+| Aplicar uma mudança no `config.yml` (ex.: série nova) | `docker compose restart api` |
+| Pausar o monitor (manutenção do gateway) | `MODO_AGENDA=off` no `.env` e recriar a `api`. O painel continua mostrando o estado |
+| Manter os avisos, mas sem contingência | `CONTINGENCIA=off` no `.env` e recriar a `api` |
+| Trocar um token (ex.: link vazou) | Gere um novo, troque no `.env`, recrie a `api` e envie os links novos. Os antigos param na hora |
 
-O nome do projeto continua `n8n` de propósito: assim o container do monitor e a pasta `data/` continuam os mesmos.
+Os logs giram sozinhos: são 10 MB × 5 arquivos por serviço.
 
-## 4. Rollback
+## 4. Migração do servidor antigo para a AWS
 
-1. `git checkout <commit anterior>` e repita o deploy da etapa 2.
-2. Se voltar para antes da saída do n8n (commits anteriores a esta branch), o compose antigo sobe de novo o n8n, o Postgres e o Traefik, com os volumes que ficaram no disco. Reative o workflow no editor, se ele não voltar ativo, e confira que o monitor antigo não está agendando: no compose antigo, `MODO_AGENDA` é `off`.
+A ordem existe por causa do token do ML de uso único e da contingência.
 
-## 5. O token do Mercado Livre morreu
+1. Confirme que o **IP da AWS está liberado** no SFTP do cliente e no bastion do Nerus. Se tiver acesso, teste antes, do servidor novo: `ssh` no bastion e `sftp` no cliente.
+2. **No servidor antigo, pare tudo:** `docker compose down`. Se ele ainda roda o n8n, desative também o workflow no editor antes. Com isso, nada mais renova o token nem agenda.
+3. Copie para o servidor novo, por exemplo com `scp -r`: o `.env`, o `monitoramento/config.yml`, a chave do bastion e a **pasta `monitoramento/data/` inteira**. Ela contém o `ml-tokens.json` (o token do ML **atual**, com prioridade sobre o `.env`), o `contingencias.json` e o `historico/`.
+4. No `.env` novo, acrescente as variáveis da seção 1 (`MODO_AGENDA`, `CONTINGENCIA`, hosts, `PAINEL_TOKEN`). Tire `COMPOSE_FILE` e as variáveis `N8N_*`, `POSTGRES_*` e de domínio do Traefik, se existirem.
+5. Suba e verifique (seção 2).
+6. Mantenha o servidor antigo **parado** por uma semana, para rollback. Não o ligue junto com o novo.
+
+## 5. Rollback
+
+- **Para uma versão anterior no mesmo servidor:** `git checkout <commit anterior> && docker compose up -d --build`.
+- **De volta ao servidor antigo:**
+  1. `docker compose down` na AWS.
+  2. Copie de volta a `monitoramento/data/` da AWS para o antigo. O token do ML girou na AWS, e o antigo tem um token morto.
+  3. Suba o antigo.
+
+## 6. O token do Mercado Livre morreu
 
 Os sinais são estes: o painel mostra "Teto ML indisponível: Falha ao renovar ML_ACCESS_TOKEN", e os avisos dizem "cobertura parcial". O monitor continua funcionando, mas só com o FTP: furos no fim da sequência ficam invisíveis.
 
@@ -113,6 +137,6 @@ Os sinais são estes: o painel mostra "Teto ML indisponível: Falha ao renovar M
      -d grant_type=authorization_code -d client_id=<ML_CLIENT_ID> -d client_secret=<ML_CLIENT_SECRET> \
      -d code=<code> -d redirect_uri=<redirect cadastrado no app>
    ```
-3. Coloque o `access_token` e o `refresh_token` da resposta em `ML_ACCESS_TOKEN` e `ML_REFRESH_TOKEN` no `.env` da VPS.
+3. Coloque o `access_token` e o `refresh_token` da resposta em `ML_ACCESS_TOKEN` e `ML_REFRESH_TOKEN` no `.env`.
 4. **Apague `monitoramento/data/ml-tokens.json`.** Esse arquivo tem prioridade sobre o `.env`. Se ficar, o monitor continua tentando o token morto.
-5. Rode `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate monitor-sftp`. No log, deve aparecer `token ML renovado` na próxima checagem.
+5. Rode `docker compose up -d --force-recreate api`. No log, deve aparecer `token ML renovado` na próxima checagem.

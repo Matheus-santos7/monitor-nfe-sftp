@@ -61,7 +61,7 @@ Uma falha numa NF não derruba o ciclo. A NF segue no lote com o erro, e o relat
 
 ## 4. Contingência
 
-Só acontece quando o ML **não** avisou o gateway **e** `CONTINGENCIA=on`, que só o `docker-compose.prod.yml` define (`nerus-contigencia.ts`):
+Só acontece quando o ML **não** avisou o gateway **e** `CONTINGENCIA=on`, que só o `.env` do servidor define (`nerus-contigencia.ts`):
 
 1. Faz login na API do Nerus (`NERUS_AUTH_URL`).
 2. Envia `POST {NERUS_NOTIFICATION_URL}?clientId={tenant}` com o aviso no formato do feed `invoices` (`topic`, `resource=/users/<seller>/invoices/<invoiceId>`, um `_id` novo).

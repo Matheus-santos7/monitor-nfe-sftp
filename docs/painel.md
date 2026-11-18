@@ -1,15 +1,20 @@
 # Camada de visualização: painel e histórico
 
-O painel mostra, em tempo real, se a integração está em dia. Ele **não envia avisos**: quem avisa é o ciclo agendado. A página é servida pelo próprio monitor (`painel.ts`), e os dados vêm de `GET /status` e `GET /historico` ([api.md](api.md)).
+O painel mostra, em tempo real, se a integração está em dia. Ele **não envia avisos**: quem avisa é o ciclo agendado. É o serviço `painel` (nginx com `painel/index.html`), atrás do proxy HTTPS. Os dados vêm de `GET /status` e `GET /historico` da `api`, repassados pelo nginx no mesmo endereço ([api.md](api.md)).
 
 ## Como abrir
 
 | Onde | URL |
 |---|---|
-| Local | `http://localhost:8081/painel?token=<MONITOR_HTTP_TOKEN>` |
-| Produção | O monitor não é exposto na internet. Abra um túnel com `ssh -L 8081:127.0.0.1:8081 <vps>` e use a mesma URL |
+| Servidor | `https://PAINEL_HOST/?token=<token>` |
+| Local | `http://localhost:8080/?token=<token>` ou `https://painel.localhost/?token=<token>` |
 
-O token vai na URL só para abrir a página. Depois o JS usa o token no header. A página não é indexada (`noindex`) e não repassa a URL em links (`no-referrer`).
+| Token no link | Para quem | Vê |
+|---|---|---|
+| `PAINEL_TOKEN` (leitura) | Time e **cliente** | Tudo, menos o botão **Executar agora** |
+| `MONITOR_HTTP_TOKEN` (operação) | Só o time técnico | Tudo, com o botão |
+
+O token vai no link só para abrir a página. O JS guarda o token na aba (`sessionStorage`), **tira da barra de endereço** e passa a enviá-lo no header. Os logs do nginx gravam o caminho sem a query string, então o token não vai para o log. A página não é indexada (`noindex`), não repassa a URL (`no-referrer`) e não pode ser embutida em outro site (`frame-ancestors 'none'`).
 
 ## Atualização
 
