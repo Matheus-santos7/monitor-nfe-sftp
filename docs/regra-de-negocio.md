@@ -1,92 +1,95 @@
-# Fluxo de monitoramento e diagnóstico
+# Regra de negócio
 
-Séries, seller e tenant vêm do `.env` / `config.yml`.
+Esta página explica o que o monitor considera um problema e o que ele faz em cada caso. As séries, o seller e o tenant vêm do `.env` e do `config.yml`. O código citado fica em `monitoramento/src/`.
 
-> Workflow `workflows/monitor-sftp.json`: os passos 1–6 abaixo rodam dentro do monitor via `POST /ciclo` e `POST /ciclo/conferir`; o n8n só agenda, faz o Wait (`espera` = 10 min / 2 min) e envia `mensagens[]`. Sem teto do ML e sem furo visível, o aviso é **"cobertura parcial"**, nunca "100% OK". Ver [ADR-004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md).
+## Termos
 
-## 1. Checagem (monitor)
-
-`POST /ciclo` — o **n8n** é o relógio (Schedule Trigger, seg–sex de hora em hora das 8h às 18h). O monitor não agenda sozinho.
-
-1. Lista XMLs nos diretórios SFTP (`config.yml`).
-2. Baixa o ZIP do ML **só do dia atual** (`ML_TETO_DIAS=1`):
-
-   `GET /users/{id}/invoices/sites/MLB/batch_request/period/stream?start=&end=&sale=authorized&file_types=xml&simple_folder=true`
-
-3. Por série, o **teto** é o maior número no ZIP. A sequência completa exige todos os números de `nota_inicial` até o teto **no FTP**, inclusive a última emitida pelo ML.
-4. Sem credencial ML (`ML_REFRESH_TOKEN` + client id/secret), o teto some e a sequência usa só o max do FTP (furos no fim ficam invisíveis).
-5. Antes de baixar o ZIP, o monitor renova o `ML_ACCESS_TOKEN` via `POST /oauth/token` (`grant_type=refresh_token`) e grava o par novo — o refresh é de uso único.
-
-Documentação ML: [Gestão e Consulta de Notas Fiscais](https://developers.mercadolivre.com.br/pt_br/obtendo-nota-fiscal).
-
-## 2. Se a integração está 100% OK
-
-O `/ciclo` devolve `status: ok` e o resumo em `mensagens[]`; o n8n envia Google Chat / e-mail / WhatsApp. Com avisos (ex.: sem teto ML) e sem furo visível, o status é `degradado` e o texto é "cobertura parcial".
-
-## 3. Se há NF ausente
-
-Para **cada** `numero/serie` ausente no mesmo ciclo (sem teto de 5):
-
-1. Localiza `invoice_id` + chave no mesmo ZIP do ML.
-2. Consulta o MySQL via SSH (um túnel para o ciclo inteiro):
-
-| Passo | SQL (ideia) | Significado |
-|---|---|---|
-| Notificação | `nerus_gateway.notification_control` · `type_notification = 'invoices'` · resource contém `/users/{seller}/invoices/{invoiceId}` | O ML avisou o gateway |
-| Destinos | `nerus_gateway.notification_control_target` pelo `notification_control_id` | `SUCCESS` / `ERROR` |
-| Nota | `nerus_o2.invoice` · `tenant_id` + `external_id` | Integrada? `channel_status`, `status` |
-| Envio FTP | `nerus_o2.fiscal_document_deliveries` · `document_id` = chave 44 | `SENT` / `PENDING` / `PROCESSING` / `RETRY_SCHEDULED` / `FAILED` / `SKIPPED` / `CANCELED` |
-
-## 4. Decisão
-
-| Situação | Ação |
+| Termo | Significado |
 |---|---|
-| Sem linha em `notification_control` | Avisa o admin **e** contingência (renotifica) |
-| Notificou, nota não está em `invoice` | Só admin (sem contingência) |
-| Nota integrada, entrega `SENT` | Recheca o SFTP (rotina de reenvio já rodou) |
-| Nota integrada, `PENDING` / `PROCESSING` / `RETRY_SCHEDULED` | Espera **10 min**, consulta de novo; se não virar `SENT`, admin |
-| Nota integrada, `FAILED` / `SKIPPED` / `CANCELED` | Admin (sem espera) |
-| Sem linha de entrega | Admin |
+| **Série** | Numeração fiscal da NF-e (ex.: série 2). Cada série tem a sua sequência. Ficam em `series[]` no `config.yml`. |
+| **`nota_inicial`** | Primeiro número da série que precisa estar no FTP. Os anteriores são ignorados. |
+| **Teto** | Maior número autorizado no relatório do Mercado Livre no dia. É até onde a sequência precisa estar completa. |
+| **Furo** | Número entre `nota_inicial` e o teto que não está no FTP. |
+| **Lote** | Os furos de um ciclo, diagnosticados juntos e conferidos juntos. |
+| **Contingência** | Reenviar ao gateway Nerus o aviso que o ML deveria ter mandado. É uma ação real em produção. |
+| **Cobertura degradada** | A checagem rodou, mas está cega numa parte (ex.: sem teto do ML). Nunca é mostrada como "ok". |
 
-## 5. Contingência
+## 1. Checagem
 
-Só quando o ML **não** notificou o gateway.
+O n8n chama `POST /ciclo` (seg–sex, de hora em hora, das 8h às 18h). O painel também roda a mesma checagem a cada 5 min, mas sem diagnóstico e sem aviso.
 
-1. `POST` signin Nerus (`NERUS_AUTH_URL`) com `NERUS_USERNAME` / `NERUS_PASSWORD`.
-2. `POST {NERUS_NOTIFICATION_URL}?clientId={tenant}` com `Authorization: Bearer {token}` (um único Bearer) e body no formato do feed `invoices`:
+1. **Lista os XMLs** nos diretórios do SFTP (`sftp.ts`). Um diretório que falha é pulado, com aviso no log.
+2. **Conta os números por série** a partir do nome do arquivo (`gaps.ts`, `chave.ts`):
+   - `…NFe<chave 44>.xml` ou um nome que começa com a chave: a série e o número saem da chave. Só entra o modelo 55 (NF-e).
+   - `…Inut-ID<dígitos>.xml`: uma inutilização conta **todos** os números da faixa como presentes.
+3. **Busca o teto no ML** (`ml-invoices.ts`). É o maior número por série no ZIP de NF-e autorizadas do dia (`ML_TETO_DIAS=1`). O ZIP fica em cache por `ML_TETO_CACHE_MIN` (padrão 5 min).
+4. **Calcula os furos:** todo número de `nota_inicial` até o teto que não está no FTP. Isso inclui o próprio teto, ou seja, a última nota emitida.
+   - Sem teto (credencial ausente, 429, nenhuma emissão no dia), o limite vira o maior número no FTP. Furos no fim da sequência ficam invisíveis, e isso entra em `avisos[]`.
+   - Série configurada sem nenhum XML no FTP também vira aviso ("Série X: nenhum XML no FTP") e conta como problema.
 
-```json
-{
-  "_id": "<uuid novo>",
-  "topic": "invoices",
-  "resource": "/users/<seller_id>/invoices/<invoiceId>",
-  "user_id": 0,
-  "application_id": 0,
-  "sent": "<ISO agora>",
-  "attempts": 1,
-  "received": "<ISO agora>",
-  "actions": []
-}
-```
+## 2. Resultado do ciclo
 
-3. O monitor não renotifica a mesma invoice duas vezes em 30 min (trava contra execução repetida).
-4. O `/ciclo` diagnostica **cada** NF ausente (uma por vez). Só então o n8n espera **2 minutos** (contingência) ou **10 minutos** (envio FTP pendente) **uma vez para o lote**.
-5. `POST /ciclo/conferir` confere o SFTP de **todas** as notas do lote. Se ainda faltar alguma, o n8n espera mais 2 minutos e confere de novo.
-6. Avisa o resultado de cada NF e um resumo do lote (`3/5 no FTP`, etc.).
+| `status` | Quando | O que o n8n envia |
+|---|---|---|
+| `ok` | Sem furo, com todas as séries com XML e sem avisos | Resumo "100% OK" |
+| `degradado` | Sem furo visível, mas com algum aviso (ex.: sem teto do ML) | "Monitoramento com cobertura parcial" e o motivo |
+| `alerta` | Há furo ou série sem XML | Diagnóstico de cada NF (seção 3) |
 
-## 6. Relatório
+No painel, o `degradado` aparece como `erro`, com o texto "Checagem incompleta — veja os avisos". O nome muda, mas a regra é a mesma: nunca verde.
 
-Chat, e-mail e WhatsApp recebem um texto nesta ordem:
+## 3. Diagnóstico de cada NF ausente
 
-1. **Resultado** — resolvido, em andamento ou precisa de atenção (depois de reconsultar o FTP).
-2. **O que aconteceu** — causa em linguagem comum (sem nome de tabela).
-3. **O que o monitor fez** — contingência, espera, reconsulta.
-4. **Onde parou** — só se ainda não resolveu, e só até o primeiro erro (os passos seguintes não rodaram).
-5. **O que fazer** — nada / aguardar / acionar o time técnico.
-6. **Rastro técnico** — consultas na ordem: tabela, filtro, linhas, ids e status; o que não rodou fica explícito; reconsulta de entrega e SFTP no final.
+Para **cada** furo do ciclo, uma NF por vez (`ciclo.ts`):
 
-O texto final é montado pelo monitor (`relatorio.ts`) depois da reconferência do FTP; o n8n só envia.
+1. **Acha o `invoice_id` e a chave** no ZIP do ML. Tenta o dia, depois os últimos 7 dias, depois o mês.
+   - Não achou: "a nota não foi encontrada no relatório do Mercado Livre". Pede o time técnico.
+   - A API do ML falhou: "Não foi possível consultar o Mercado Livre: <motivo>". Também pede o time técnico. Não é a mesma coisa que "não achou".
+2. **Consulta o Nerus** pelo MySQL, via SSH (`diagnostico.ts`, `consultarEstadoNerus`). Todas as NFs do ciclo usam **um único** túnel. As tabelas estão em [integracoes.md](integracoes.md#nerus).
+3. **Decide a ação** (`decidirAcao`):
 
-## FAKE_NOTA
+| Situação no Nerus | Ação | Admin? |
+|---|---|---|
+| O ML não avisou (sem linha em `notification_control`) | **Contingência** e espera de 2 min | sim |
+| Avisou, mas a nota não está em `invoice` | nenhuma | sim |
+| Nota integrada, entrega `SENT` | rechecar o FTP | não |
+| Nota integrada, entrega `PENDING` / `PROCESSING` / `RETRY_SCHEDULED` ou status desconhecido | esperar 10 min | sim |
+| Nota integrada, entrega `FAILED` / `SKIPPED` / `CANCELED` | nenhuma | sim |
+| Nota integrada, sem linha de entrega | nenhuma | sim |
+| Alguma consulta ao Nerus deu erro | nenhuma: **não** dispara contingência "no escuro" | sim |
 
-`FAKE_NOTA=1000/1` no `.env` (n8n **e** monitor) injeta essa NF como ausente depois da análise real. Serve para exercitar diagnóstico sem furo de verdade. Desligar com vazio / `0` / `false` / `off` e recriar os containers.
+Uma falha numa NF não derruba o ciclo. A NF segue no lote com o erro, e o relatório pede o time técnico.
+
+## 4. Contingência
+
+Só acontece quando o ML **não** avisou o gateway **e** `CONTINGENCIA=on`, que só o `docker-compose.prod.yml` define (`nerus-contigencia.ts`):
+
+1. Faz login na API do Nerus (`NERUS_AUTH_URL`).
+2. Envia `POST {NERUS_NOTIFICATION_URL}?clientId={tenant}` com o aviso no formato do feed `invoices` (`topic`, `resource=/users/<seller>/invoices/<invoiceId>`, um `_id` novo).
+
+**Trava:** a mesma invoice não é renotificada duas vezes em 30 min. Isso protege contra um "Executar agora" logo depois de um timeout, ou contra dois workflows ativos ao mesmo tempo. A trava fica em memória: um restart do monitor zera a trava. Se a renotificação falhar, a trava é liberada e o próximo ciclo tenta de novo.
+
+Com `CONTINGENCIA` diferente de `on`, o diagnóstico roda inteiro, mas o relatório diz "não disparada neste ciclo".
+
+## 5. Espera e conferência do lote
+
+1. **Uma espera para o lote inteiro:** 10 min se alguma NF aguarda envio, senão 2 min se houve contingência. A de 10 min vence.
+2. O n8n chama `POST /ciclo/conferir` com o lote. O monitor reconfere o FTP de **todas** as NFs.
+3. Se ainda faltar alguma, o n8n espera mais 2 min e confere de novo.
+4. Na última conferência sai **um relatório por NF** e **um resumo do lote** ("3/5 no FTP").
+
+O monitor não guarda o lote: ele vai e volta no corpo da chamada ([ADR-004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md)).
+
+## 6. Formato do relatório de uma NF
+
+A ordem é sempre esta (`relatorio.ts`, `relatorioNota`):
+
+1. **Resultado:** ✅ resolvido, ⚠️ ainda ausente ou ⚠️ precisa de atenção.
+2. **O que fazer:** nada, aguardar ou acionar o time técnico.
+3. **O que aconteceu:** a causa, em linguagem comum, sem nome de tabela.
+4. **O que o monitor fez:** contingência, aviso já reenviado (trava), espera ou reconsulta.
+5. **Onde a integração parou:** só se não resolveu, e só até o primeiro erro.
+6. **Rastro técnico:** cada consulta com tabela, filtro, linhas, ids e status, mais a execução do n8n.
+
+## 7. `FAKE_NOTA`
+
+`FAKE_NOTA=99999/2` no `.env` injeta essa NF como ausente depois da análise real, para exercitar o fluxo sem um furo de verdade. Use um número que não existe: ele cai em "não encontrada no relatório do ML" e não dispara contingência. Para desligar, deixe vazio (ou `0`, `off`, `false`) e recrie o container.
