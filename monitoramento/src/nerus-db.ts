@@ -24,6 +24,8 @@ export function configNerusDb() {
   };
 }
 
+const QUERY_TIMEOUT_MS = 30_000; // túnel travado não pode prender o /ciclo até o timeout de 600 s do n8n
+
 type Aberta = { conn: mysql.Connection; fechar: () => Promise<void> };
 
 async function abrirMysqlNerus(): Promise<Aberta> {
@@ -56,6 +58,8 @@ async function abrirMysqlNerus(): Promise<Aberta> {
       stream: stream as import("node:net").Socket,
       connectTimeout: 20_000,
     });
+    // Sem listener, um 'error' fatal (túnel caiu ocioso) derruba o processo; a próxima query já falha sozinha.
+    conn.on("error", (erro) => console.error(`▶ Conexão MySQL Nerus: ${erro.message}`));
     return {
       conn,
       fechar: async () => {
@@ -91,7 +95,7 @@ export async function queryNerus<T extends Linha = Linha>(
   if (s) a = await (s.aberta ??= abrirMysqlNerus());
   else a = await abrirMysqlNerus();
   try {
-    const [rows] = await a.conn.execute(sql, params);
+    const [rows] = await a.conn.execute({ sql, timeout: QUERY_TIMEOUT_MS }, params);
     return (Array.isArray(rows) ? rows : []) as T[];
   } finally {
     if (!s) await a.fechar();

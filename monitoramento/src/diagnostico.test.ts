@@ -7,6 +7,7 @@ import {
   erroDeConsulta,
   horarioTabelaEBrasilia,
   montarPassos,
+  diagnosticarNota,
   type RelatorioDiagnostico,
 } from "./diagnostico.js";
 import { comSessaoNerus, queryNerus } from "./nerus-db.js";
@@ -220,3 +221,81 @@ test("relatório: contingência segurada pela trava diz que o aviso já foi reen
   assert.match(r.mensagem, /já reenviado às 10:05/);
   assert.doesNotMatch(r.mensagem, /não é falta de notificação/);
 });
+
+// diagnosticarNota com Nerus e contingência falsos: o caminho que faz a renotificação real.
+const semAvisoMl = async () => ({ notificacao: null, alvos: [], invoice: null, entregas: [], rastro: [] });
+
+function contadorRenotificar(falhar = false) {
+  const chamadas: string[] = [];
+  const renotificar = async (o: { invoiceId: string }) => {
+    chamadas.push(o.invoiceId);
+    if (falhar) throw new Error("HTTP 502");
+    return { notificationId: "n-1", httpStatus: 200 };
+  };
+  return { chamadas, renotificar };
+}
+
+function comEnvNerus<T>(fn: () => Promise<T>): Promise<T> {
+  const antes = { u: process.env.ML_USER_ID, t: process.env.NERUS_TENANT_ID, a: process.env.ML_APPLICATION_ID };
+  process.env.ML_USER_ID = "1";
+  process.env.NERUS_TENANT_ID = "t";
+  process.env.ML_APPLICATION_ID = "2";
+  return fn().finally(() => {
+    for (const [k, v] of [["ML_USER_ID", antes.u], ["NERUS_TENANT_ID", antes.t], ["ML_APPLICATION_ID", antes.a]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+}
+
+test("diagnosticarNota: sem aviso do ML renotifica uma vez; a 2ª chamada é segurada pela trava", () =>
+  comEnvNerus(async () => {
+    const { chamadas, renotificar } = contadorRenotificar();
+    const deps = { consultar: semAvisoMl, renotificar };
+    const nota = { invoiceId: "inv-diag-1", numero: 10, serie: 2 };
+    const r1 = await diagnosticarNota(nota, deps);
+    const r2 = await diagnosticarNota(nota, deps);
+    assert.deepEqual(chamadas, ["inv-diag-1"]);
+    assert.equal(r1.passos.find((p) => p.id === "contigencia")?.status, "ok");
+    assert.equal(r2.passos.find((p) => p.id === "contigencia")?.status, "info");
+    assert.equal(r2.proximaAcao, "contigencia");
+  }));
+
+test("diagnosticarNota: executarContigencia=false não renotifica", () =>
+  comEnvNerus(async () => {
+    const { chamadas, renotificar } = contadorRenotificar();
+    const r = await diagnosticarNota(
+      { invoiceId: "inv-diag-2", numero: 11, serie: 2, executarContigencia: false },
+      { consultar: semAvisoMl, renotificar },
+    );
+    assert.deepEqual(chamadas, []);
+    assert.equal(r.passos.find((p) => p.id === "contigencia"), undefined);
+  }));
+
+test("diagnosticarNota: falha na renotificação libera a trava e pede admin", () =>
+  comEnvNerus(async () => {
+    const falha = contadorRenotificar(true);
+    const nota = { invoiceId: "inv-diag-3", numero: 12, serie: 2 };
+    const r = await diagnosticarNota(nota, { consultar: semAvisoMl, renotificar: falha.renotificar });
+    assert.equal(r.precisaAdmin, true);
+    assert.equal(r.passos.find((p) => p.id === "contigencia")?.status, "erro");
+    const ok = contadorRenotificar();
+    await diagnosticarNota(nota, { consultar: semAvisoMl, renotificar: ok.renotificar });
+    assert.deepEqual(ok.chamadas, ["inv-diag-3"]); // trava liberada: o próximo ciclo tenta de novo
+  }));
+
+test("diagnosticarNota: consulta ao Nerus com erro não dispara contingência", () =>
+  comEnvNerus(async () => {
+    const { chamadas, renotificar } = contadorRenotificar();
+    const consultar = async () => ({
+      notificacao: null,
+      alvos: [],
+      invoice: null,
+      entregas: [],
+      rastro: [{ n: 1, tabela: "nerus_gateway.notification_control", executado: true, filtro: "", linhas: 0, detalhe: "ERRO: SSH timeout" }],
+    });
+    const r = await diagnosticarNota({ invoiceId: "inv-diag-4", numero: 13, serie: 2 }, { consultar, renotificar });
+    assert.deepEqual(chamadas, []);
+    assert.equal(r.proximaAcao, "nenhuma");
+    assert.equal(r.precisaAdmin, true);
+  }));

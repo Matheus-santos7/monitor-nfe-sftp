@@ -3,7 +3,9 @@
 Host local: `http://127.0.0.1:8081` (container escuta `0.0.0.0:8080`).  
 Rede Docker (n8n): `http://monitor-sftp:8080`.
 
-Autenticação: `MONITOR_HTTP_TOKEN` no `.env` (preferido) ou `http.token` em `config.yml`. Envie `Authorization: Bearer {token}` ou `X-Token`. Evite `?token=` (aparece em logs de proxy). Sem token configurado, os endpoints ficam abertos na rede Docker.
+Autenticação: `MONITOR_HTTP_TOKEN` no `.env` (preferido) ou `http.token` em `config.yml`. Envie `Authorization: Bearer {token}` ou `X-Token`. `?token=` só é aceito em `/painel` (para abrir no navegador; a página responde com `Referrer-Policy: no-referrer` e chama `/status` e `/historico` com o header). **Sem token configurado, todas as rotas exceto `/health` respondem 401** — o `POST /ciclo` dispara contingência real.
+
+Erros de entrada: JSON inválido ou corpo que não é objeto → 400; corpo acima de 1 MB → 413. `notas[]` precisa de 1–500 itens com `numero` e `serie` inteiros positivos; itens de `lote[]` sem `numero`/`serie` válidos → 400.
 
 Timeouts no n8n para `/ciclo` (600 s) e `/ciclo/conferir` devem ser altos (ZIP do ML + SFTP + SSH).
 
@@ -49,7 +51,7 @@ Campos de `resultado`:
 
 ## `GET /historico?dia=AAAAMMDD`
 
-Histórico de avisos e saúde do dia (padrão: hoje, em America/Sao_Paulo). Gravado a cada checagem em `data/historico/AAAAMMDD.json` (`HISTORICO_DIR`), então sobrevive a restart.
+Histórico de avisos e saúde do dia (padrão: hoje, em America/Sao_Paulo; `dia` fora do formato → 400). Um arquivo ilegível é movido para `AAAAMMDD.json.corrompido-<ms>` e o dia recomeça, sem parar a checagem; falha ao gravar aparece em `avisos[]` do painel. Gravado a cada checagem em `data/historico/AAAAMMDD.json` (`HISTORICO_DIR`), então sobrevive a restart.
 
 - `eventos[]`: `furo_aberto`, `furo_resolvido` (com `duracaoMin`), `checagem_falhou`, `checagem_voltou`, `aviso`. Cada um só é gravado quando o estado muda.
 - `checagens`: `total` / `ok` / `alerta` / `erro`.

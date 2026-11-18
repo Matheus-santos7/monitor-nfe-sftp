@@ -51,7 +51,19 @@ export function lerDia(dia: string): DiaHistorico | null {
   if (!/^\d{8}$/.test(dia)) return null;
   const arq = join(dir(), `${dia}.json`);
   if (!existsSync(arq)) return null;
-  return JSON.parse(readFileSync(arq, "utf8")) as DiaHistorico;
+  try {
+    return JSON.parse(readFileSync(arq, "utf8")) as DiaHistorico;
+  } catch (erro) {
+    // Arquivo ilegível não pode parar a checagem: guarda ao lado para análise e começa o dia de novo.
+    const guardado = `${arq}.corrompido-${Date.now()}`;
+    try {
+      renameSync(arq, guardado);
+    } catch {
+      /* se nem renomear der, o próximo salvarDia sobrescreve */
+    }
+    console.error(`▶ Histórico ${dia} ilegível (${erro instanceof Error ? erro.message : String(erro)}); movido para ${guardado}`);
+    return null;
+  }
 }
 
 export function salvarDia(d: DiaHistorico): void {

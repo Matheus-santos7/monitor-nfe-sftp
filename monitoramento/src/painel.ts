@@ -64,6 +64,7 @@ export const PAINEL_HTML = `<!doctype html>
 </main>
 <script>
   const token = new URLSearchParams(location.search).get("token") || "";
+  const auth = { cache: "no-store", headers: { Authorization: "Bearer " + token } };
   const VELHO_MIN = 15; // furo com mais de 15 min já é atraso real, não latência de envio
   const $ = (id) => document.getElementById(id);
   const hora = (iso) => new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
@@ -133,8 +134,7 @@ export const PAINEL_HTML = `<!doctype html>
   let diaEscolhido = "";
   async function carregarHistorico() {
     try {
-      const q = "/historico?token=" + encodeURIComponent(token) + (diaEscolhido ? "&dia=" + diaEscolhido : "");
-      const resp = await fetch(q, { cache: "no-store" });
+      const resp = await fetch("/historico" + (diaEscolhido ? "?dia=" + diaEscolhido : ""), auth);
       const h = await resp.json();
       if (!resp.ok) throw new Error(h.erro || "HTTP " + resp.status);
       const dias = h.dias.includes(h.dia) ? h.dias : [h.dia, ...h.dias];
@@ -164,7 +164,7 @@ export const PAINEL_HTML = `<!doctype html>
   async function carregar() {
     carregarHistorico();
     try {
-      const resp = await fetch("/status?token=" + encodeURIComponent(token), { cache: "no-store" });
+      const resp = await fetch("/status", auth);
       const s = await resp.json();
       if (!resp.ok) throw new Error(s.erro || "HTTP " + resp.status);
       render(s);

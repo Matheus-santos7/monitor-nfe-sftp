@@ -63,8 +63,7 @@
       "position": [
         240,
         100
-      ],
-      "onError": "continueRegularOutput"
+      ]
     },
     {
       "parameters": {
@@ -144,7 +143,6 @@
         960,
         0
       ],
-      "onError": "continueRegularOutput",
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -227,7 +225,6 @@
         1680,
         -100
       ],
-      "onError": "continueRegularOutput",
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -307,7 +304,7 @@
     },
     {
       "parameters": {
-        "content": "## Monitor NF-e\nToda a regra (checagem, diagnóstico, contingência, espera do lote, textos) está no monitor-sftp (`POST /ciclo`, `POST /ciclo/conferir`). Aqui só agenda, espera e envia `mensagens`.\n\nMantenha **um único** workflow de monitoramento ativo por cliente. Para testar sem renotificar o gateway, use `CONTINGENCIA=off` no monitor.",
+        "content": "## Monitor NF-e\nToda a regra (checagem, diagnóstico, contingência, espera do lote, textos) está no monitor-sftp (`POST /ciclo`, `POST /ciclo/conferir`). Aqui só agenda, espera e envia `mensagens`.\n\nMantenha **um único** workflow de monitoramento ativo por cliente. Para testar sem renotificar o gateway, use `CONTINGENCIA=off` no monitor.\n\nFalha no `/ciclo` ou no `/ciclo/conferir` para a execução e cai no **Error Handler** (Settings → Error workflow). Só os nós de aviso continuam se um canal falhar, para os outros ainda receberem.",
         "height": 260,
         "width": 420
       },

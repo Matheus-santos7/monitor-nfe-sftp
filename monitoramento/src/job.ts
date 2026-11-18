@@ -110,7 +110,11 @@ function salvar(d: DiaHistorico): void {
   try {
     salvarDia(d);
   } catch (erro) {
-    console.error(`▶ Histórico não gravado: ${erro instanceof Error ? erro.message : String(erro)}`);
+    const msg = `Histórico não gravado: ${erro instanceof Error ? erro.message : String(erro)}`;
+    console.error(`▶ ${msg}`);
+    // Aparece no painel: sem isso os KPIs do dia congelam e seguem "Saudável".
+    painel.avisos = [...painel.avisos, msg];
+    if (painel.status === "ok") painel.status = "erro";
   }
 }
 

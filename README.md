@@ -81,7 +81,7 @@ Tudo que identifica o cliente fica no `.env` e no `config.yml` (ambos fora do Gi
 | `ML_CLIENT_ID` / `ML_CLIENT_SECRET` / `ML_REFRESH_TOKEN` | OAuth ML; o access token dura ~6 h e o refresh gira a cada renovação |
 | `ML_USER_ID` | Seller do relatório fiscal |
 | `NERUS_*` | SSH, MySQL e API do gateway (diagnóstico e contingência) |
-| `MONITOR_HTTP_TOKEN` | Bearer entre n8n e o monitor |
+| `MONITOR_HTTP_TOKEN` | Bearer entre n8n e o monitor. **Obrigatório**: sem ele o monitor recusa tudo (exceto `/health`) |
 | `ML_TETO_CACHE_MIN` | Minutos que o ZIP do ML (teto) fica em cache; padrão 5. Suba se aparecer 429 |
 | `PAINEL_INTERVALO_MIN` | Intervalo da checagem silenciosa do painel (min). `0` desliga |
 | `CONTINGENCIA` | `off` diagnostica sem renotificar o gateway (homologação, testes ao vivo). Produção: `on` |

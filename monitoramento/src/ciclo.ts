@@ -78,9 +78,24 @@ export async function rodarCiclo(deps: DepsCiclo, execucao: string, agora = new 
 }
 
 async function diagnosticarItem(deps: DepsCiclo, nota: Nota, mlUserId: string, execucao: string): Promise<ItemLote> {
-  const loc = await deps.localizar(nota).catch(() => null);
-  if (!loc?.encontrado || !loc.invoiceId) return itemInvoiceAusente(nota, execucao);
   const referencia = `${nota.numero}/${nota.serie}`;
+  let loc: Awaited<ReturnType<DepsCiclo["localizar"]>>;
+  try {
+    loc = await deps.localizar(nota);
+  } catch (erro) {
+    // Falha da API do ML ≠ "nota não está no relatório": diz que a consulta falhou e pede o time técnico.
+    const motivo = erro instanceof Error ? erro.message : String(erro);
+    console.error(`▶ Localizar NF ${referencia} no ML falhou: ${motivo}`);
+    return {
+      referencia,
+      numero: nota.numero,
+      serie: nota.serie,
+      invoiceId: null,
+      proximaAcao: "nenhuma",
+      diagnostico: `Não foi possível consultar o Mercado Livre: ${motivo}`,
+    };
+  }
+  if (!loc.encontrado || !loc.invoiceId) return itemInvoiceAusente(nota, execucao);
   try {
     const d = await deps.diagnosticar({
       invoiceId: loc.invoiceId,
@@ -105,6 +120,7 @@ async function diagnosticarItem(deps: DepsCiclo, nota: Nota, mlUserId: string, e
     };
   } catch (erro) {
     // Falha numa NF não derruba o ciclo: ela segue no lote e o relatório pede o time técnico.
+    console.error(`▶ Diagnóstico da NF ${referencia} falhou: ${erro instanceof Error ? erro.message : String(erro)}`);
     return {
       referencia,
       numero: nota.numero,

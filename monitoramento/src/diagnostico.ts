@@ -760,7 +760,7 @@ export async function diagnosticarNota(opts: {
   serie: number;
   mlUserId?: string;
   executarContigencia?: boolean;
-}): Promise<RelatorioDiagnostico> {
+}, deps = { consultar: consultarEstadoNerus, renotificar: renotificarInvoice }): Promise<RelatorioDiagnostico> {
   const invoiceId = String(opts.invoiceId);
   const mlUserId = opts.mlUserId || process.env.ML_USER_ID?.trim();
   if (!mlUserId) throw new Error("Defina ML_USER_ID no .env");
@@ -770,7 +770,7 @@ export async function diagnosticarNota(opts: {
     process.env.ML_APPLICATION_ID?.trim() || process.env.ML_CLIENT_ID?.trim() || "";
   const referencia = `${opts.numero}/${opts.serie}`;
 
-  const estado = await consultarEstadoNerus({
+  const estado = await deps.consultar({
     invoiceId,
     chave: opts.chave,
     mlUserId,
@@ -810,7 +810,7 @@ export async function diagnosticarNota(opts: {
   } else if (decisao.proximaAcao === "contigencia" && opts.executarContigencia !== false) {
     try {
       if (!applicationId) throw new Error("Defina ML_APPLICATION_ID ou ML_CLIENT_ID no .env");
-      contigencia = await renotificarInvoice({ invoiceId, mlUserId, applicationId });
+      contigencia = await deps.renotificar({ invoiceId, mlUserId, applicationId });
       passos.push({
         id: "contigencia",
         titulo: "Contingência",

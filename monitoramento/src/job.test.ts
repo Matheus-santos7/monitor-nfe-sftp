@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registrarChecagem, statusPainel, type ResultadoJob } from "./job.js";
@@ -46,4 +46,11 @@ test("histórico do dia registra furo aberto/resolvido e resume a saúde", async
   assert.equal(r.saudePct, 40);
   assert.equal(r.resolucaoMediaMin, 20);
   assert.equal(r.abertosAgora, 0);
+});
+
+test("histórico corrompido: lerDia não lança, guarda o arquivo ao lado e devolve null", () => {
+  const dir = process.env.HISTORICO_DIR!;
+  writeFileSync(join(dir, "20990101.json"), "{ truncado");
+  assert.equal(lerDia("20990101"), null);
+  assert.ok(readdirSync(dir).some((f) => f.startsWith("20990101.json.corrompido-")));
 });
