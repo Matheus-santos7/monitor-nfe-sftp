@@ -5,6 +5,7 @@ import { executarJob, jobOcupado, statusPainel } from "./job.js";
 import { PAINEL_HTML } from "./painel.js";
 import { diaDe, lerDia, listarDias, resumirDia } from "./historico.js";
 import { conferirLote, depsReais, rodarCiclo } from "./ciclo.js";
+import { depsOrquestradorReais, dispararCiclo, estadoCiclo, type DepsOrquestrador } from "./orquestrador.js";
 import type { ItemLote } from "./relatorio.js";
 import type { Passo, ProximaAcao } from "./diagnostico.js";
 import { listarNotasAutorizadas, tetosPorSerie } from "./ml-invoices.js";
@@ -175,6 +176,8 @@ export function iniciarHttp(config: AppConfig): void {
   });
 }
 
+let depsManual: DepsOrquestrador | undefined;
+
 async function rotear(config: AppConfig, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
 
@@ -209,6 +212,7 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
       ocupado: jobOcupado(),
       intervaloMin: intervaloPainelMin(),
       cliente: config.cliente,
+      ciclo: estadoCiclo(),
       ...statusPainel(),
     });
     return;
@@ -245,6 +249,23 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
       console.error(`▶ Ciclo falhou: ${msgErro(erro)}`);
       json(res, 500, { ok: false, erro: msgErro(erro) });
     }
+    return;
+  }
+
+  if (url.pathname === "/ciclo/agora" && req.method === "POST") {
+    if (!autorizado(req, tokenMonitor(config), url)) {
+      json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
+      return;
+    }
+    const { modo } = estadoCiclo();
+    if (modo === "off") {
+      // com o n8n agendando, uma rodada daqui somaria contingência e avisos aos dele
+      json(res, 409, { ok: false, erro: 'agenda desligada (MODO_AGENDA=off): use o "Executar agora" do n8n' });
+      return;
+    }
+    depsManual ??= depsOrquestradorReais(config);
+    const iniciado = dispararCiclo(depsManual, { origem: "manual", sombra: modo === "sombra" });
+    json(res, iniciado ? 202 : 409, iniciado ? { ok: true, ciclo: estadoCiclo() } : { ok: false, erro: "já há um ciclo em andamento" });
     return;
   }
 
@@ -313,6 +334,6 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
   json(res, 404, {
     ok: false,
     erro:
-      "use GET /health, GET /painel, GET /status, GET /historico, POST /ciclo, POST /ciclo/conferir ou GET /ml/teto",
+      "use GET /health, GET /painel, GET /status, GET /historico, POST /ciclo, POST /ciclo/agora, POST /ciclo/conferir ou GET /ml/teto",
   });
 }

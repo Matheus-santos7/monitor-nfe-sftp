@@ -37,6 +37,7 @@ export const PAINEL_HTML = `<!doctype html>
   .saudavel { color:var(--ok); } .atencao { color:var(--al); } .critico { color:var(--er); }
   select { font:inherit; padding:5px 8px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--tx); }
   .linhah2 { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
   button { font:inherit; padding:6px 12px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--tx); cursor:pointer; }
 </style>
 </head>
@@ -47,6 +48,9 @@ export const PAINEL_HTML = `<!doctype html>
     <span class="mut"><span id="checado">—</span> · <button id="recarregar" type="button">Atualizar</button></span>
   </header>
   <div id="banner" class="banner aguardando" role="status" aria-live="polite">Carregando…</div>
+
+  <div class="linhah2"><h2>Ciclo de monitoramento</h2><button id="executar" type="button">Executar agora</button></div>
+  <div class="card"><ul id="ciclo"></ul></div>
 
   <h2>Avisos</h2>
   <div class="card"><ul id="avisos"></ul></div>
@@ -112,6 +116,8 @@ export const PAINEL_HTML = `<!doctype html>
     }) : [];
     $("ausentes").replaceChildren(...(aus.length ? aus : [linha(["Nenhuma", "", ""])]));
 
+    renderCiclo(s.ciclo);
+
     $("series").replaceChildren(...(r ? r.series.map((x) => linha([
       String(x.serie),
       x.totalAusentes === -1 ? "0" : String(x.total),
@@ -121,6 +127,38 @@ export const PAINEL_HTML = `<!doctype html>
       x.totalAusentes === -1 ? "sem XML" : String(x.totalAusentes),
     ], x.totalAusentes !== 0 ? "velho" : "")) : []));
   }
+
+  const MODO = { off: "desligada — quem agenda é o n8n", sombra: "SOMBRA — roda sem contingência e sem enviar avisos", ativo: "ativa — o monitor agenda, espera e avisa" };
+  const STATUS_CICLO = { ok: "✅ ok", degradado: "⚠️ cobertura parcial", alerta: "⚠️ alerta (furos)", falhou: "❌ falhou" };
+  const hm = (iso) => new Date(iso).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+  function renderCiclo(c) {
+    if (!c) return;
+    const linhas = ["Agenda: " + MODO[c.modo] + (c.agenda ? " (" + c.agenda + ")" : "")];
+    if (c.emAndamento) linhas.push("Em andamento: " + (c.etapa || "iniciando") + (c.aguardandoAte ? " — confere às " + hm(c.aguardandoAte) : ""));
+    else if (c.proximo) linhas.push("Próximo ciclo: " + hora(c.proximo));
+    const u = c.ultimo;
+    if (u) {
+      linhas.push("Último ciclo (" + (u.origem === "manual" ? "manual" : "agenda") + (u.sombra ? ", sombra" : "") + "): " + hora(u.inicio) + " · " +
+        (STATUS_CICLO[u.status] || u.status) + " · " + u.mensagens + " aviso(s)" + (u.sombra ? " não enviados" : "") +
+        (u.semEntrega ? " · " + u.semEntrega + " SEM ENTREGA em nenhum canal" : "") +
+        (u.erro ? " · " + u.etapaFalha + ": " + u.erro : ""));
+    } else if (c.modo !== "off") linhas.push("Nenhum ciclo rodou desde que o monitor subiu.");
+    $("ciclo").replaceChildren(...linhas.map(item));
+    $("executar").disabled = c.modo === "off" || c.emAndamento;
+    $("executar").title = c.modo === "off" ? "Com MODO_AGENDA=off o ciclo é do n8n" : c.emAndamento ? "Já há um ciclo em andamento" : "";
+  }
+  $("executar").onclick = async () => {
+    const real = ultimo && ultimo.ciclo && ultimo.ciclo.modo === "ativo";
+    if (!confirm(real ? "Rodar o ciclo agora? Pode disparar contingência real e enviar avisos." : "Rodar o ciclo agora em modo sombra (sem contingência, sem avisos)?")) return;
+    try {
+      const resp = await fetch("/ciclo/agora", { ...auth, method: "POST" });
+      const r = await resp.json();
+      if (!resp.ok) throw new Error(r.erro || "HTTP " + resp.status);
+    } catch (e) {
+      $("ciclo").prepend(item("Não iniciou: " + e.message));
+    }
+    carregar();
+  };
 
   const ROTULO = { furo_aberto: "⚠️ Furo", furo_resolvido: "✅ Resolvido", checagem_falhou: "❌ Falha", checagem_voltou: "🔄 Voltou", aviso: "ℹ️ Aviso" };
   const NIVEL = { saudavel: "Saudável", atencao: "Atenção", critico: "Crítico", sem_dados: "Sem dados" };
