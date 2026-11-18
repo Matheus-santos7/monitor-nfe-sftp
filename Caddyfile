@@ -1,0 +1,14 @@
+# Proxy HTTPS do monitor: um endereço (DNS) por serviço, nas portas 80/443.
+# Nome público (ex.: monitor.seusetor.com.br) → certificado automático do Let's Encrypt.
+# Exige: registro DNS apontando para o IP do servidor e portas 80 e 443 abertas no Security Group.
+# Nome *.localhost (padrão local) → certificado da CA interna do Caddy.
+
+# Frontend: painel e histórico (time e cliente)
+{$PAINEL_HOST} {
+	reverse_proxy painel:80
+}
+
+# Backend: API (Authorization: Bearer). Token de leitura ou de operação.
+{$API_HOST} {
+	reverse_proxy api:8080
+}

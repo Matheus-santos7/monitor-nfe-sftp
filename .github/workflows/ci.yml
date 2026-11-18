@@ -25,3 +25,9 @@ jobs:
       # tsx (npm test) não checa tipos: o typecheck roda separado.
       - run: npm run typecheck
       - run: npm test
+      - name: JS do painel sem erro de sintaxe
+        working-directory: .
+        run: node -e "const h=require('fs').readFileSync('painel/index.html','utf8');new Function(h.split('<script>')[1].split('</script>')[0])"
+      - name: docker-compose.yml válido
+        working-directory: .
+        run: docker compose --env-file .env.example config -q
