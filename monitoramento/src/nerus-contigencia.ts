@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 function reqEnv(nome: string): string {
   const v = process.env[nome]?.trim();
@@ -83,18 +85,56 @@ export async function renotificarInvoice(opts: {
 }
 
 export const JANELA_CONTINGENCIA_MS = 30 * 60_000;
-// shortcut: trava só em memória — um restart do monitor dentro da janela permite repetir; persistir se isso acontecer na prática.
-const reenviadas = new Map<string, number>();
+
+// Trava gravada em disco (data/contingencias.json): um restart do monitor dentro da janela não libera
+// uma segunda renotificação da mesma invoice. Sem disco, segue só em memória (com log).
+const caminhoTrava = () => process.env.CONTINGENCIAS_PATH?.trim() || "data/contingencias.json";
+let reenviadas: Map<string, number> | null = null;
+
+function carregar(agora: number): Map<string, number> {
+  if (reenviadas) return reenviadas;
+  reenviadas = new Map();
+  try {
+    const dados = JSON.parse(readFileSync(caminhoTrava(), "utf8")) as Record<string, unknown>;
+    for (const [inv, ms] of Object.entries(dados)) {
+      if (typeof ms === "number" && agora - ms < JANELA_CONTINGENCIA_MS) reenviadas.set(inv, ms);
+    }
+  } catch {
+    /* sem arquivo (primeira vez) ou ilegível: começa vazio */
+  }
+  return reenviadas;
+}
+
+function gravar(mapa: Map<string, number>, agora: number): void {
+  for (const [inv, ms] of mapa) if (agora - ms >= JANELA_CONTINGENCIA_MS) mapa.delete(inv); // poda as vencidas
+  const arq = caminhoTrava();
+  try {
+    mkdirSync(dirname(arq), { recursive: true });
+    writeFileSync(`${arq}.tmp`, JSON.stringify(Object.fromEntries(mapa)));
+    renameSync(`${arq}.tmp`, arq);
+  } catch (erro) {
+    console.error(`▶ Trava da contingência não gravada (${erro instanceof Error ? erro.message : String(erro)}); vale só até o restart`);
+  }
+}
 
 /** Reserva a contingência da invoice. Retorna o horário da anterior (ms) se já houve uma na janela; null = pode disparar. */
 export function reservarContingencia(invoiceId: string, agora = Date.now()): number | null {
-  const anterior = reenviadas.get(invoiceId);
+  const mapa = carregar(agora);
+  const anterior = mapa.get(invoiceId);
   if (anterior !== undefined && agora - anterior < JANELA_CONTINGENCIA_MS) return anterior;
-  reenviadas.set(invoiceId, agora);
+  mapa.set(invoiceId, agora);
+  gravar(mapa, agora);
   return null;
 }
 
 /** Libera a reserva quando a renotificação falhou, para o próximo ciclo poder tentar de novo. */
 export function liberarContingencia(invoiceId: string): void {
-  reenviadas.delete(invoiceId);
+  const mapa = carregar(Date.now());
+  mapa.delete(invoiceId);
+  gravar(mapa, Date.now());
+}
+
+/** Só para testes: esquece o que está em memória, como num restart. */
+export function _reiniciarTrava(): void {
+  reenviadas = null;
 }

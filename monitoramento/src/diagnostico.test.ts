@@ -11,7 +11,13 @@ import {
   type RelatorioDiagnostico,
 } from "./diagnostico.js";
 import { comSessaoNerus, queryNerus } from "./nerus-db.js";
-import { JANELA_CONTINGENCIA_MS, liberarContingencia, reservarContingencia } from "./nerus-contigencia.js";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { JANELA_CONTINGENCIA_MS, _reiniciarTrava, liberarContingencia, reservarContingencia } from "./nerus-contigencia.js";
+
+// a trava grava em disco: nos testes, numa pasta temporária (nunca no data/ real)
+process.env.CONTINGENCIAS_PATH = join(mkdtempSync(join(tmpdir(), "trava-")), "contingencias.json");
 
 test("classificarEntregas: SENT ganha de pending", () => {
   assert.equal(classificarEntregas([{ status: "PENDING" }, { status: "SENT" }]), "enviada");
@@ -299,3 +305,14 @@ test("diagnosticarNota: consulta ao Nerus com erro não dispara contingência", 
     assert.equal(r.proximaAcao, "nenhuma");
     assert.equal(r.precisaAdmin, true);
   }));
+
+test("trava de contingência sobrevive a um restart do monitor e poda as vencidas", () => {
+  const agora = Date.now();
+  assert.equal(reservarContingencia("inv-restart", agora), null);
+  _reiniciarTrava(); // simula restart: memória zerada, só o arquivo sobra
+  assert.equal(reservarContingencia("inv-restart", agora + 60_000), agora);
+  const gravado = JSON.parse(readFileSync(process.env.CONTINGENCIAS_PATH!, "utf8")) as Record<string, number>;
+  assert.equal(gravado["inv-restart"], agora);
+  _reiniciarTrava();
+  assert.equal(reservarContingencia("inv-restart", agora + JANELA_CONTINGENCIA_MS), null); // venceu: libera
+});
