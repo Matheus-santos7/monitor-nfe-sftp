@@ -1,5 +1,8 @@
-# Overlay do servidor: Traefik com TLS automático (Let's Encrypt).
+# Overlay do servidor, aplicado por cima do docker-compose.yml:
+#   - Traefik com TLS automático (Let's Encrypt) na frente do n8n
+#   - CONTINGENCIA=on no monitor (fora da VPS ela fica off)
 # Requer domínio apontando para o IP do VPS e .env com HTTPS.
+# Atalho: COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml no .env da VPS.
 #
 # Uso:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d

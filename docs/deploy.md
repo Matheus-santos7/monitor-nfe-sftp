@@ -42,6 +42,14 @@ Para ver um furo sem esperar um de verdade, faça assim:
 
 ## 2. Deploy do monitor na VPS
 
+Na VPS, o `docker-compose.prod.yml` (Traefik e `CONTINGENCIA=on`) precisa entrar em **todo** comando. Coloque uma vez no `.env` do servidor:
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+```
+
+Com isso, `docker compose ...` já inclui os dois arquivos. Os comandos abaixo mantêm o `-f` explícito para funcionar mesmo sem essa linha.
+
 ```bash
 ssh <vps>
 cd <pasta do projeto>

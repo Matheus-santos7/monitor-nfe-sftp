@@ -6,8 +6,10 @@
 # Máquina:   docker compose up -d
 #            http://localhost:5678
 #
-# Servidor:  ajuste o .env (HTTPS + domínio) e, se for usar Traefik:
-#            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Servidor:  SEMPRE com o overlay de produção (Traefik/TLS + CONTINGENCIA=on).
+#            Sem ele, a contingência fica desligada e o n8n fica sem HTTPS.
+#            Coloque no .env da VPS:  COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+#            e todo `docker compose ...` já usa os dois arquivos. Ver docs/deploy.md.
 #
 # Pare o `npx n8n` (porta 5678) antes de subir.
 
