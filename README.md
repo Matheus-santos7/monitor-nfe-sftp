@@ -1,113 +1,144 @@
-# Monitor NF-e SFTP
+# Monitor NF-e Mercado Livre × SFTP
 
-Detecta NF-e autorizada no Mercado Livre que ainda não chegou ao SFTP, aponta em qual etapa da integração fiscal a nota parou e, quando o marketplace nunca notificou o gateway, dispara a contingência.
+Detecta NF-e autorizada no Mercado Livre que **ainda não chegou ao SFTP do cliente**. Aponta em que etapa da integração fiscal a nota parou (aviso do ML → gateway Nerus → envio ao FTP) e, quando o ML não avisou o gateway, **dispara a contingência** (reenvia o aviso). O objetivo é agir antes de o cliente perceber.
 
-O n8n agenda e notifica. Um serviço Node (`monitor-sftp`) consulta o SFTP, o relatório ZIP do Mercado Livre e o MySQL do gateway (via SSH).
+> ⚠️ **Roda contra sistemas reais de produção. Não existe staging.** A contingência renotifica o gateway fiscal de verdade, e o token do Mercado Livre é de uso único. Leia [Antes do primeiro `up`](#rodar-localmente) antes de subir qualquer coisa.
 
-## O que ele faz
+## Como funciona
 
-1. Lista os XMLs no SFTP e baixa o relatório fiscal do Mercado Livre (ZIP do dia).
-2. Usa a **última NF autorizada de cada série** como teto da sequência — não o último arquivo do FTP.
-3. Se faltar número: localiza o `invoice_id` no ZIP, consulta o gateway (aviso ML → Nerus → envio FTP) e monta um relatório com resultado, causa e o que fazer.
-4. Se o Mercado Livre não avisou o sistema, dispara a contingência, espera no n8n e reconsulta. Se o XML aparecer no FTP, o aviso sai como resolvido.
+```
+n8n  (agenda seg–sex 8h–18h, espera, envia Chat / e-mail / WhatsApp)
+  │  POST /ciclo, POST /ciclo/conferir
+  ▼
+monitor-sftp  (toda a regra + painel)
+  ├─ SFTP do cliente ........ quais XMLs chegaram
+  ├─ Mercado Livre .......... última NF autorizada (teto) e invoice_id
+  └─ Nerus (MySQL via SSH) .. onde a nota parou; API de contingência
+```
 
-Detalhe do fluxo: [docs/fluxo.md](docs/fluxo.md) · HTTP: [docs/api.md](docs/api.md) · decisões: [docs/decisions/](docs/decisions/).
+1. **Checa.** Lista os XMLs no SFTP e pega, no relatório do ML, a última NF autorizada de cada série (o **teto**). Toda a numeração de `nota_inicial` até o teto precisa estar no FTP.
+2. **Diagnostica cada furo.** Consulta o Nerus para saber em que etapa a nota parou e decide: contingência, esperar o envio, rechecar o FTP ou chamar o time técnico.
+3. **Espera e confere.** O n8n espera 2 ou 10 min e o monitor reconfere o FTP do lote inteiro.
+4. **Avisa.** Um relatório por NF, com o resultado, a causa, o que o monitor fez e o que fazer.
 
-## Stack
+O painel web mostra o estado a cada 5 min e guarda o histórico de cada dia.
 
-| Peça | Papel |
+### Glossário
+
+| Termo | Significado |
 |---|---|
-| n8n | Agenda (seg–sex, de hora em hora das 8h às 18h, America/Sao_Paulo), Wait, Chat / e-mail / WhatsApp |
-| monitor-sftp | SFTP, OAuth ML, ZIP de NF-e, SSH → MySQL, contingência |
-| PostgreSQL | Banco **do n8n** (não é o banco fiscal) |
+| Série | Numeração fiscal da NF-e. Cada série tem a sua sequência |
+| Teto | Maior número autorizado no ML no dia: até onde a sequência precisa estar completa |
+| Furo | Número entre `nota_inicial` e o teto que não está no FTP |
+| Lote | Os furos de um ciclo, conferidos juntos |
+| Contingência | Reenviar ao Nerus o aviso que o ML não mandou. **Ação real** |
+| Nerus | Gateway fiscal que recebe o aviso do ML, registra a nota e envia o XML ao FTP |
+| Cobertura degradada | A checagem rodou, mas está cega numa parte (ex.: sem teto do ML). Nunca aparece como verde |
+
+## Mapa do repositório
 
 ```
-n8n (agenda, Wait, envia mensagens[])
-  ├─ POST /ciclo           SFTP + teto ML + diagnóstico de cada furo + contingência + espera
-  └─ POST /ciclo/conferir  reconfere o FTP do lote e devolve os relatórios
-        │
-        ▼
-  monitor-sftp (+ /painel, /status, /historico)
-        ├─ SFTP (XML)
-        ├─ api.mercadolibre.com (ZIP batch_request)
-        └─ SSH → MySQL (notification_control, invoice, fiscal_document_deliveries)
+monitoramento/        serviço Node 22 + TypeScript (a regra inteira)
+  src/                um módulo por responsabilidade + *.test.ts ao lado
+  config.example.yml  modelo do config.yml (cliente, SFTP, séries)
+workflows/            workflows do n8n (JSON para importar)
+docs/                 documentação por camada (ver abaixo)
+secrets/              chave SSH do bastion (fora do Git)
+docker-compose.yml    stack base (local e VPS)
+docker-compose.prod.yml  overlay da VPS: Traefik/HTTPS + contingência ligada
+.env.example          modelo do .env (segredos, fora do Git)
+.github/workflows/    CI: typecheck + testes em todo PR
 ```
 
-## Subir localmente
+## Rodar localmente
+
+**Pré-requisitos:** Docker com Compose e, para rodar os testes fora do container, Node 22. As credenciais (SFTP, ML, Nerus, chave SSH) vêm do responsável pelo projeto. Elas **nunca** vão para o Git.
 
 > ⚠️ **Antes do primeiro `up`:**
-> - Deixe `CONTINGENCIA=off`, que é o padrão do `.env.example`. Com `on`, o monitor renotifica o gateway fiscal **de verdade**, e não existe staging.
-> - **Nunca** use o `ML_REFRESH_TOKEN` da produção. Ele é de uso único: a primeira renovação na sua máquina derruba a VPS. Deixe vazio ou use um token próprio.
->
-> O log de subida mostra o modo: `Contingência desligada` ou `LIGADA`.
+> - Deixe `CONTINGENCIA=off`, que já é o padrão. Com `on`, o monitor renotifica o gateway fiscal **de verdade**.
+> - **Nunca** use o `ML_REFRESH_TOKEN` da produção. Ele é de uso único: a primeira renovação na sua máquina derruba a VPS. Deixe vazio (o monitor roda só com o FTP, em "cobertura parcial") ou use um token próprio.
 
 ```bash
-cp .env.example .env          # preencha segredos — nunca commite
+cp .env.example .env                                   # preencha; nunca commite
 cp monitoramento/config.example.yml monitoramento/config.yml
-# coloque a chave SSH do bastion em secrets/bastion.pem (chmod 600)
+# chave SSH do bastion em secrets/bastion.pem (chmod 600), se for diagnosticar no Nerus
 
 docker compose up -d --build
+docker compose logs --tail 20 monitor-sftp
 ```
+
+**Deu certo se** o log mostra `monitor-sftp pronto :8080` e `Contingência desligada`, e o painel abre:
 
 | Serviço | URL |
 |---|---|
+| Painel | http://localhost:8081/painel?token=SEU_MONITOR_HTTP_TOKEN |
 | n8n | http://localhost:5678 |
-| Monitor (host) | http://localhost:8081 |
-| Monitor (rede Docker) | http://monitor-sftp:8080 |
+| Monitor (para o n8n) | http://monitor-sftp:8080 |
 
-Importar os workflows:
+Para importar os workflows no n8n local, use `docker compose run --rm --no-deps n8n import:workflow --input=/files/workflows/monitor-sftp.json` (e o mesmo com `error-handler.json`). Os detalhes estão em [docs/n8n.md](docs/n8n.md).
 
-```bash
-docker compose run --rm --no-deps n8n import:workflow --input=/files/workflows/monitor-sftp.json
-docker compose run --rm --no-deps n8n import:workflow --input=/files/workflows/error-handler.json
-```
-
-Não use `docker exec n8n n8n import:workflow` — sobe um segundo processo no mesmo container.
-
-No editor, ative **1. Monitor SFTP NF-e (ciclo)** — toda a regra fica no monitor ([ADR-004](docs/decisions/0004-regra-no-monitor-n8n-so-orquestra.md)). Mantenha **um único** workflow de monitoramento ativo por cliente: desative qualquer outro antes (a contingência rodaria em dobro; o monitor ainda segura a mesma invoice por 30 min). Em Settings → Error workflow, selecione **0. Error Handler — Monitor NF-e**. O monitor não tem cron interno: quem agenda é o n8n.
-
-## Comandos
-
-| Comando | Efeito |
-|---|---|
-| `docker compose up` | Sobe o stack; o log mostra só os passos do fluxo |
-| `docker compose up -d --build monitor-sftp` | Rebuild do monitor |
-| `curl -H "Authorization: Bearer $MONITOR_HTTP_TOKEN" http://127.0.0.1:8081/status` | Resultado da última checagem do painel |
-| `cd monitoramento && npm run check` | Typecheck e testes (o mesmo que o CI roda) |
-| http://localhost:8081/painel?token=$MONITOR_HTTP_TOKEN | Painel em tempo real (checa a cada `PAINEL_INTERVALO_MIN`, padrão 5; `0` desliga). Não envia avisos — quem avisa é o n8n |
-
-Produção (VPS): **siga [docs/deploy.md](docs/deploy.md)**. Ele cobre deploy, troca de workflow na ordem certa, teste de fumaça, rollback e recuperação do token do ML. O overlay `docker-compose.prod.yml` liga o Traefik e a contingência (`CONTINGENCIA=on`).
+Testes: `cd monitoramento && npm run check`, com typecheck e testes, o mesmo que o CI roda.
 
 ## Mudanças comuns
 
 | Quero… | Onde | Como validar |
 |---|---|---|
-| Mudar o texto de um aviso | `monitoramento/src/relatorio.ts` (resumo, lote, conferência) e `concluirRelatorio` em `diagnostico.ts` (diagnóstico de uma NF) | `cd monitoramento && npm run check`. Os testes em `ciclo.test.ts` e `diagnostico.test.ts` comparam trechos do texto |
-| Adicionar uma série | `series[]` no `monitoramento/config.yml`. `nota_inicial` é a primeira NF que precisa estar no FTP; as anteriores são ignoradas | `docker compose restart monitor-sftp` e conferir a série no painel |
-| Mudar uma regra de decisão | `decidirAcao` em `diagnostico.ts`, `rodarCiclo` em `ciclo.ts` | escreva o teste primeiro e rode `npm run check` |
-| Ver um furo sem esperar um de verdade | `FAKE_NOTA=99999/2` no `.env`, com `CONTINGENCIA=off` | recrie o monitor, confira o painel e depois volte `FAKE_NOTA=` para vazio |
-| Colocar em produção | [docs/deploy.md](docs/deploy.md) | o CI (`.github/workflows/ci.yml`) roda typecheck e testes em todo PR |
+| Mudar o texto de um aviso | `monitoramento/src/relatorio.ts` (resumo, lote, conferência) e `concluirRelatorio` em `diagnostico.ts` (diagnóstico de uma NF) | `npm run check`. Os testes de `ciclo.test.ts` e `diagnostico.test.ts` conferem trechos do texto |
+| Adicionar uma série | `series[]` no `monitoramento/config.yml`. `nota_inicial` = primeira NF que precisa estar no FTP | `docker compose restart monitor-sftp` e conferir a série no painel |
+| Mudar uma regra de decisão | `decidirAcao` em `diagnostico.ts`, `rodarCiclo` em `ciclo.ts` | Escreva o teste primeiro e depois rode `npm run check` |
+| Ver um furo sem esperar um real | `FAKE_NOTA=99999/2` no `.env`, com `CONTINGENCIA=off` | Recrie o monitor, confira o painel e volte para vazio |
+| Mudar o workflow do n8n | `workflows/*.json`. Sem regra em nó Code | [docs/n8n.md](docs/n8n.md) |
+| Colocar em produção | [docs/deploy.md](docs/deploy.md) | O CI tem que estar verde no PR |
 
 ## Configuração
 
-Tudo que identifica o cliente fica no `.env` e no `config.yml` (ambos fora do Git). O `.env.example` e o `config.example.yml` usam só valores fictícios.
+Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, ambos fora do Git. Os arquivos `.example` usam só valores fictícios e comentam cada variável. As que mais importam:
 
 | Variável | Uso |
 |---|---|
-| `ML_CLIENT_ID` / `ML_CLIENT_SECRET` / `ML_REFRESH_TOKEN` | OAuth ML; o access token dura ~6 h e o refresh gira a cada renovação |
-| `ML_USER_ID` | Seller do relatório fiscal |
+| `MONITOR_HTTP_TOKEN` | Token entre o n8n e o monitor. **Obrigatório**: sem ele, o monitor recusa tudo, menos `/health` |
+| `CONTINGENCIA` | Só `on` renotifica. Vazio = desligada. O `docker-compose.prod.yml` liga na VPS |
+| `ML_CLIENT_ID` / `ML_CLIENT_SECRET` / `ML_REFRESH_TOKEN` / `ML_USER_ID` | OAuth e seller do ML. O refresh é de uso único |
 | `NERUS_*` | SSH, MySQL e API do gateway (diagnóstico e contingência) |
-| `MONITOR_HTTP_TOKEN` | Bearer entre n8n e o monitor. **Obrigatório**: sem ele o monitor recusa tudo (exceto `/health`) |
-| `ML_TETO_CACHE_MIN` | Minutos que o ZIP do ML (teto) fica em cache; padrão 5. Suba se aparecer 429 |
-| `PAINEL_INTERVALO_MIN` | Intervalo da checagem silenciosa do painel (min). `0` desliga |
-| `CONTINGENCIA` | Só `on` renotifica o gateway. Vazio = `off`. O `docker-compose.prod.yml` liga em produção; em qualquer outro lugar fica `off` |
-| `FAKE_NOTA` | Ex.: `1000/1` força um furo de teste; vazio em produção |
+| `ML_TETO_CACHE_MIN` | Cache do ZIP do ML, em minutos (padrão 5). Suba se aparecer 429 |
+| `PAINEL_INTERVALO_MIN` | Checagem do painel, em minutos (padrão 5; `0` desliga) |
+| `FAKE_NOTA` | Força um furo de teste. Vazio em produção |
 
-Depois de mudar o `.env`: `docker compose up -d --force-recreate monitor-sftp n8n`.
+Depois de mudar o `.env`: `docker compose up -d --force-recreate monitor-sftp n8n`. Depois de mudar o `config.yml`: `docker compose restart monitor-sftp`.
+
+## Produção
+
+Siga **[docs/deploy.md](docs/deploy.md)**: acessos, o que nunca fazer, deploy, troca de workflow na ordem certa, teste de fumaça, rollback e recuperação do token do ML. Na VPS, o overlay `docker-compose.prod.yml` é obrigatório. Coloque `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml` no `.env` do servidor.
+
+## Problemas comuns
+
+| Sintoma | Causa | O que fazer |
+|---|---|---|
+| `EISDIR` na subida | Faltava `.env`, `config.yml` ou `bastion.pem`, e o Docker criou uma **pasta** no lugar | Apague a pasta, copie o `.example` e suba de novo |
+| `401` "defina MONITOR_HTTP_TOKEN" | Token ausente no `.env` | Gere com `openssl rand -hex 32` e recrie o monitor e o n8n |
+| `Cannot parse privateKey` | `secrets/bastion.pem` vazio ou inválido | Coloque a chave real (`chmod 600`) |
+| Painel "Checagem incompleta", aviso "Teto ML indisponível" | ML fora, 429 ou token do ML inválido | 429: suba `ML_TETO_CACHE_MIN`. Token morto: [deploy.md](docs/deploy.md#5-o-token-do-mercado-livre-morreu) |
+| Painel "Painel sem conexão com o monitor" | Container parado ou token errado na URL | `docker compose ps` e confira o `?token=` |
+| Log diz `Contingência desligada` na VPS | Subiu sem o overlay de produção | Use `COMPOSE_FILE` (seção Produção) e recrie |
+| NF "não encontrada no relatório do Mercado Livre" | A NF não está no ZIP do mês (número errado ou nota de outra conta) | Confira a NF no ML; o time técnico investiga |
 
 ## Limites conhecidos
 
-- `GET /users/{id}/invoices/search` retorna 403. O `invoice_id` sai do ZIP (`{invoice_id}_{chave}-procNFe.xml`).
-- Sem token ML (ou sem emissão no dia), o teto cai no máximo do FTP — furos no fim da sequência ficam invisíveis.
-- Esperas de 2 min (contingência) e 10 min (entrega pending) são nós Wait do n8n, não o HTTP do monitor.
-- Postgres do n8n não é publicado na 5432 do host.
+- Sem teto do ML (sem token ou sem emissão no dia), o limite cai no máximo do FTP, e furos no fim da sequência ficam invisíveis. Por isso o status vira "cobertura parcial".
+- `GET /users/{id}/invoices/search` do ML retorna 403. O `invoice_id` sai do ZIP ([ADR-001](docs/decisions/0001-relatorio-zip-em-vez-de-search.md)).
+- A trava da contingência (30 min por invoice) fica em memória e zera num restart do monitor.
+- O agendamento é seg–sex, das 8h às 18h. Um furo fora desse horário só é avisado no próximo ciclo; o painel continua checando.
+
+## Documentação
+
+| Camada | Documento |
+|---|---|
+| Regra de negócio (teto, furos, decisão, contingência, relatório) | [docs/regra-de-negocio.md](docs/regra-de-negocio.md) |
+| Orquestração (workflows n8n, nó a nó) | [docs/n8n.md](docs/n8n.md) |
+| Serviço monitor (módulos, fluxo de uma chamada, testes) | [docs/monitor.md](docs/monitor.md) |
+| Integrações (SFTP, Mercado Livre, Nerus) | [docs/integracoes.md](docs/integracoes.md) |
+| Painel e histórico | [docs/painel.md](docs/painel.md) |
+| Contrato HTTP | [docs/api.md](docs/api.md) |
+| Infra, deploy e recuperação | [docs/deploy.md](docs/deploy.md) |
+| Decisões (por que é assim) | [docs/decisions/](docs/decisions/) |
+| Contexto para sessões de análise | [PROJECT-CONTEXT.md](PROJECT-CONTEXT.md) |
