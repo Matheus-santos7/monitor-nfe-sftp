@@ -88,7 +88,7 @@ test("invoice fora do ZIP ou falha no Nerus → NF segue no lote sem derrubar o 
 test("série sem XML → aviso de série, sem lote", async () => {
   const r = await rodarCiclo(deps({ checar: async () => job([], [], true) }), "7");
   assert.equal(r.status, "alerta");
-  assert.match(r.mensagens[0].mensagem, /série com o Mercado Livre[\s\S]*execução n8n=7/);
+  assert.match(r.mensagens[0].mensagem, /série com o Mercado Livre[\s\S]*execução=7/);
 });
 
 test("token ML inválido derruba o ciclo (vai pro Error Handler)", async () => {

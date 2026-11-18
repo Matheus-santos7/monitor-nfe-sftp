@@ -97,6 +97,13 @@ export function registrarChecagem(
   salvar(d);
 }
 
+/** Evento avulso no histórico do dia (ex.: aviso que nenhum canal entregou). */
+export function registrarEventoAviso(texto: string, agora = new Date()): void {
+  const d = diaAtual(agora);
+  d.eventos.push({ em: agora.toISOString(), tipo: "aviso", texto });
+  salvar(d);
+}
+
 let hoje: DiaHistorico | null = null;
 
 /** Troca de arquivo à meia-noite (SP); furos abertos passam para o dia novo. */

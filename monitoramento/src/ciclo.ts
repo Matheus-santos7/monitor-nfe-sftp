@@ -57,7 +57,14 @@ export type ResultadoCiclo = {
   mensagens: Mensagem[];
 };
 
-export async function rodarCiclo(deps: DepsCiclo, execucao: string, agora = new Date()): Promise<ResultadoCiclo> {
+/** `contingencia: false` força só diagnóstico (modo sombra da agenda), mesmo com CONTINGENCIA=on. */
+export async function rodarCiclo(
+  deps: DepsCiclo,
+  execucao: string,
+  agora = new Date(),
+  opcoes: { contingencia?: boolean } = {},
+): Promise<ResultadoCiclo> {
+  const contingencia = (opcoes.contingencia ?? true) && contingenciaLigada();
   const r = await deps.checar();
   const status = !r.integracaoOk ? "alerta" : r.avisos.length ? "degradado" : "ok";
   const base = { status, identificador: r.identificador, avisos: r.avisos, notasAusentes: r.notasAusentes } as const;
@@ -68,19 +75,19 @@ export async function rodarCiclo(deps: DepsCiclo, execucao: string, agora = new 
     return fim({ lote: [], espera: "nenhuma", mensagens: [resumo] });
   }
 
-  const me = await deps.validarMl(); // falha aqui = token ML inválido → erro HTTP → Error Handler do n8n
+  const me = await deps.validarMl(); // falha aqui = token ML inválido → o ciclo falha e quem chamou avisa (aviso de falha)
   if (!r.notasAusentes.length) {
     return fim({ lote: [], espera: "nenhuma", mensagens: [mensagemSerieSemXml(r.identificador, execucao)] });
   }
 
   const lote: ItemLote[] = [];
   await comSessaoNerus(async () => {
-    for (const nota of r.notasAusentes) lote.push(await diagnosticarItem(deps, nota, String(me.id), execucao));
+    for (const nota of r.notasAusentes) lote.push(await diagnosticarItem(deps, nota, String(me.id), execucao, contingencia));
   });
   return fim({ lote, espera: decidirEsperaLote(lote.map((i) => i.proximaAcao)), mensagens: [] });
 }
 
-async function diagnosticarItem(deps: DepsCiclo, nota: Nota, mlUserId: string, execucao: string): Promise<ItemLote> {
+async function diagnosticarItem(deps: DepsCiclo, nota: Nota, mlUserId: string, execucao: string, contingencia: boolean): Promise<ItemLote> {
   const referencia = `${nota.numero}/${nota.serie}`;
   let loc: Awaited<ReturnType<DepsCiclo["localizar"]>>;
   try {
@@ -106,7 +113,7 @@ async function diagnosticarItem(deps: DepsCiclo, nota: Nota, mlUserId: string, e
       numero: nota.numero,
       serie: nota.serie,
       mlUserId,
-      executarContigencia: contingenciaLigada(),
+      executarContigencia: contingencia,
     });
     return {
       referencia: d.referencia,

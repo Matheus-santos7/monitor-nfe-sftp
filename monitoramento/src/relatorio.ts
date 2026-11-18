@@ -132,7 +132,7 @@ export function mensagemSerieSemXml(identificador: string, execucao: string): Me
       "Não há XML no FTP para montar a sequência das notas.\n\n" +
       "O que fazer:\n" +
       "Acionar o time técnico.\n\n" +
-      `execução n8n=${execucao}`,
+      `execução=${execucao}`,
   };
 }
 
@@ -151,7 +151,7 @@ export function itemInvoiceAusente(nota: Nota, execucao: string): ItemLote {
       "Sem o identificador da nota no Mercado Livre, o diagnóstico no Nerus não consegue rodar.\n\n" +
       "O que fazer:\n" +
       "Acionar o time técnico.\n\n" +
-      `execução n8n=${execucao}`,
+      `execução=${execucao}`,
   };
 }
 
@@ -241,7 +241,7 @@ export function relatorioNota(diag: ItemLote, ausentesAgora: Nota[] | null, exec
   else if (diag.contigencia?.notificationId) linhas.push(`contingência ${diag.contigencia.notificationId}`);
   if (xmlNoFtp === true) linhas.push("Rechecar SFTP → XML encontrado");
   else if (xmlNoFtp === false) linhas.push("Rechecar SFTP → XML ainda ausente");
-  linhas.push(`execução n8n=${execucao}`);
+  linhas.push(`execução=${execucao}`);
 
   return {
     referencia,
@@ -283,7 +283,7 @@ export function relatorioConferencia(originais: Nota[], ausentesAgora: Nota[], e
       mensagem:
         `✅ Lote concluído — as ${originais.length} notas ausentes já estão no FTP.\n\n` +
         `Notas: ${listaOk}\n\n` +
-        `execução n8n=${execucao}`,
+        `execução=${execucao}`,
     };
   }
   return {
@@ -294,6 +294,6 @@ export function relatorioConferencia(originais: Nota[], ausentesAgora: Nota[], e
       (listaOk ? `Já no FTP: ${listaOk}\n` : "") +
       `Ainda faltam: ${listaFalta}\n\n` +
       "Acionar o time técnico para as que continuam ausentes.\n\n" +
-      `execução n8n=${execucao}`,
+      `execução=${execucao}`,
   };
 }
