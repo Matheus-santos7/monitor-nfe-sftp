@@ -1,7 +1,7 @@
 # n8n + PostgreSQL + monitor SFTP NF-e
 # Uso: docker compose up -d --build
 # UI:  http://localhost:5678
-# Monitor: POST http://localhost:8081/executar
+# Monitor: http://localhost:8081/painel · n8n chama POST /ciclo
 #
 # Máquina:   docker compose up -d
 #            http://localhost:5678

@@ -147,45 +147,6 @@ function baseRelatorio(
   };
 }
 
-test("relatório: XML no FTP após contingência = resolvido, sem jargão nem 'aguardar'", () => {
-  const r = concluirRelatorio(baseRelatorio(), { xmlNoFtp: true, executionId: 37 });
-  assert.equal(r.resolvido, true);
-  assert.equal(r.precisaAdmin, false);
-  assert.match(r.assunto, /resolvido/);
-  assert.match(r.mensagem, /✅ Resolvido/);
-  assert.match(r.mensagem, /Nada a fazer/);
-  assert.match(r.mensagem, /não avisou o sistema/);
-  assert.match(r.mensagem, /contingência/);
-  assert.match(r.mensagem, /XML apareceu no FTP/);
-  assert.match(r.mensagem, /chave=35260833115817001802550020000065491986846029/);
-  assert.match(r.mensagem, /execução n8n=37/);
-  assert.doesNotMatch(r.mensagem, /Aguardar 1–3/);
-  assert.doesNotMatch(r.mensagem, /Onde a integração parou/);
-  assert.doesNotMatch(r.mensagem, /\[ERRO\]/);
-  const [humano, tecnico] = r.mensagem.split("Rastro técnico");
-  assert.doesNotMatch(humano, /notification_control/);
-  assert.doesNotMatch(humano, /fiscal_document_deliveries/);
-  assert.match(tecnico, /nerus_gateway.notification_control/);
-  assert.match(tecnico, /não executado — sem notification_control.id/);
-  assert.match(tecnico, /nerus_o2.invoice/);
-  assert.match(tecnico, /nerus_o2.fiscal_document_deliveries/);
-  assert.match(tecnico, /notification_id=e245afd8-6ab6-41c3-8585-6c2946be49ed/);
-  assert.match(tecnico, /Rechecar SFTP → XML encontrado/);
-});
-
-test("relatório: XML ainda ausente após contingência = precisa de atenção + onde parou", () => {
-  const r = concluirRelatorio(baseRelatorio(), { xmlNoFtp: false, executionId: 37 });
-  assert.equal(r.resolvido, false);
-  assert.equal(r.precisaAdmin, true);
-  assert.match(r.mensagem, /Ainda não resolvido/);
-  assert.match(r.mensagem, /Acionar o time técnico/);
-  assert.match(r.mensagem, /Onde a integração parou/);
-  assert.match(r.mensagem, /Mercado Livre avisou o sistema\? Não/);
-  assert.match(r.mensagem, /passos seguintes ainda não rodaram/);
-  assert.doesNotMatch(r.mensagem, /XML enviado ao FTP/);
-  assert.doesNotMatch(r.mensagem, /Nada a fazer/);
-});
-
 test("relatório: rastro técnico percorre tabelas, ids e status", () => {
   const r = concluirRelatorio(
     baseRelatorio({
@@ -202,7 +163,6 @@ test("relatório: rastro técnico percorre tabelas, ids e status", () => {
       proximaAcao: "rechecar_ftp",
       contigencia: null,
     }),
-    { xmlNoFtp: true, executionId: 9 },
   );
   const tecnico = r.mensagem.split("Rastro técnico")[1] || "";
   assert.match(tecnico, /notification_control_id=484ce485-a27c-4e02-ad2b-4129dddf9c40/);
@@ -221,15 +181,6 @@ test("erroDeConsulta: ERRO na tabela é distinguível de 0 linhas", () => {
     { n: 1, tabela: "nerus_gateway.notification_control", executado: true, filtro: "", linhas: 0, detalhe: "ERRO: SSH timeout" },
   ]);
   assert.equal(falha?.tabela, "nerus_gateway.notification_control");
-});
-
-test("relatório: envio disparado mas XML ainda não listado", () => {
-  const r = concluirRelatorio(baseRelatorio({ proximaAcao: "rechecar_ftp" }), {
-    xmlNoFtp: false,
-    classificacaoEntregaAposEspera: "enviada",
-  });
-  assert.match(r.mensagem, /Em andamento/);
-  assert.match(r.mensagem, /próximo ciclo/);
 });
 
 test("trava de contingência: mesma invoice não é renotificada duas vezes em 30 min", () => {
@@ -257,4 +208,15 @@ test("sessão Nerus: queries do mesmo ciclo reaproveitam uma única abertura (fa
   } finally {
     if (antes !== undefined) process.env.NERUS_SSH_HOST = antes;
   }
+});
+
+test("relatório: contingência segurada pela trava diz que o aviso já foi reenviado", () => {
+  const r = concluirRelatorio(
+    baseRelatorio({
+      proximaAcao: "contigencia",
+      passos: [{ id: "contigencia", titulo: "Contingência", status: "info", detalhe: "Aviso já reenviado às 10:05; não repetido (janela de 30 min)." }],
+    }),
+  );
+  assert.match(r.mensagem, /já reenviado às 10:05/);
+  assert.doesNotMatch(r.mensagem, /não é falta de notificação/);
 });

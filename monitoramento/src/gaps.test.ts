@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extrairInutilizacao, partesDaChave } from "./chave.js";
 import { analisarSeries, calcularPulos, expandirNotas, integracaoCompleta, parseFakeNota } from "./gaps.js";
-import { montarEventoPainel, montarPayload } from "./webhook.js";
-import type { AppConfig } from "./types.js";
 
 /** Chave NF-e fictícia (CNPJ 00.000.000/0001-91). */
 function chaveNfe(serie: number, numero: number): string {
@@ -146,54 +144,6 @@ test("última do ML presente no FTP fecha a sequência até o teto", () => {
   assert.equal(integracaoCompleta([s2]), true);
 });
 
-test("payload de erro usa cardsV2 no formato pedido", () => {
-  const config: AppConfig = {
-    cliente: { nome: "Atlas", conta: "279642028", canal: "Mercado Livre" },
-    sftp: { host: "h", porta: 22, usuario: "u", senha: "s", diretorios: [] },
-    series: [{ numero: 5, nota_inicial: 1 }],
-    webhooks: {},
-  };
-  const payload = montarPayload(config, [
-    {
-      serie: 5,
-      cnpj: "x",
-      total: 1,
-      min: 1,
-      max: 10,
-      pulos: [{ inicio: 15692, fim: 15692, qtd: 1 }],
-      totalAusentes: 1,
-    },
-  ]);
-  assert.ok("cardsV2" in payload);
-  if ("cardsV2" in payload) {
-    const text = payload.cardsV2[0].card.sections[0].widgets[0].decoratedText.text;
-    assert.equal(text, "<b>15692 / 5</b>");
-  }
-});
-
-test("evento do painel usa identificador do cliente", () => {
-  const config: AppConfig = {
-    cliente: { nome: "Atlas", conta: "279642028", canal: "Mercado Livre" },
-    sftp: { host: "h", porta: 22, usuario: "u", senha: "s", diretorios: [] },
-    series: [{ numero: 5, nota_inicial: 1 }],
-    webhooks: {},
-  };
-  const evento = montarEventoPainel(config, [
-    {
-      serie: 5,
-      cnpj: "x",
-      total: 1,
-      min: 1,
-      max: 10,
-      pulos: [{ inicio: 15692, fim: 15692, qtd: 1 }],
-      totalAusentes: 1,
-    },
-  ]);
-  assert.equal(evento.identificador, "Cliente: Atlas - Conta 279642028");
-  assert.equal(evento.status, "alerta");
-  assert.equal(evento.notas[0].texto, "15692 / 5");
-});
-
 test("integração completa exige todas as séries sem furo e com XML", () => {
   assert.equal(
     integracaoCompleta([
@@ -209,19 +159,4 @@ test("integração completa exige todas as séries sem furo e com XML", () => {
     ]),
     false,
   );
-});
-
-test("payload ok usa o texto do cliente", () => {
-  const config: AppConfig = {
-    cliente: { nome: "Atlas", conta: "279642028", canal: "Mercado Livre" },
-    sftp: { host: "h", porta: 22, usuario: "u", senha: "s", diretorios: [] },
-    series: [{ numero: 2, nota_inicial: 2630 }],
-    webhooks: {},
-  };
-  const payload = montarPayload(config, [
-    { serie: 2, cnpj: "x", total: 10, min: 2630, max: 2640, pulos: [], totalAusentes: 0 },
-  ]);
-  assert.deepEqual(payload, {
-    text: "✅ Todas as notas foram integradas no FTP (Cliente: Atlas - Conta 279642028).",
-  });
 });

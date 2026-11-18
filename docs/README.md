@@ -10,4 +10,4 @@
 | [decisions/0001-relatorio-zip-em-vez-de-search.md](decisions/0001-relatorio-zip-em-vez-de-search.md) | Por que o ZIP, não `/invoices/search` |
 | [decisions/0002-teto-da-sequencia-pelo-ml.md](decisions/0002-teto-da-sequencia-pelo-ml.md) | Teto da sequência = última NF do ML |
 | [decisions/0003-diagnostico-via-ssh-mysql.md](decisions/0003-diagnostico-via-ssh-mysql.md) | MySQL Nerus via bastion; Wait no n8n |
-| [decisions/0004-regra-no-monitor-n8n-so-orquestra.md](decisions/0004-regra-no-monitor-n8n-so-orquestra.md) | Regra no monitor (`/ciclo`); n8n v2 sem nós Code |
+| [decisions/0004-regra-no-monitor-n8n-so-orquestra.md](decisions/0004-regra-no-monitor-n8n-so-orquestra.md) | Regra no monitor (`/ciclo`); workflow n8n sem nós Code |

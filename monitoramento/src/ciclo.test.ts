@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { conferirLote, rodarCiclo, type DepsCiclo } from "./ciclo.js";
 import type { ResultadoJob } from "./job.js";
 import type { RelatorioDiagnostico } from "./diagnostico.js";
+import { relatorioNota } from "./relatorio.js";
 
 type Nota = { numero: number; serie: number };
 const job = (notas: Nota[], avisos: string[] = [], semXml = false): ResultadoJob => ({
@@ -40,7 +41,7 @@ test("ciclo sem furo e checagem completa → ok, só o resumo, sem lote", async 
   assert.match(r.mensagens[0].mensagem, /100% OK/);
 });
 
-test("ciclo sem furo mas sem teto ML → degradado, nunca '100% OK' (falso verde do v1)", async () => {
+test("ciclo sem furo mas sem teto ML → degradado, nunca '100% OK' (falso verde)", async () => {
   const r = await rodarCiclo(deps({ checar: async () => job([], ["Teto ML indisponível: 429"]) }), "1");
   assert.equal(r.status, "degradado");
   assert.doesNotMatch(r.mensagens[0].mensagem, /100% OK/);
@@ -104,4 +105,22 @@ test("conferência: relatório por NF + resumo do lote, com o que ainda falta", 
   assert.equal(r.aindaFaltam, true);
   assert.deepEqual(r.faltando, [{ numero: 102, serie: 2 }]);
   assert.deepEqual(r.mensagens.map((m) => m.assunto), ["NF-e 101/2 — resolvido", "NF-e 102/2 — ainda ausente no FTP", "Lote de furos — 1/2 no FTP"]);
+});
+
+test("relatório do lote: contingência segurada pela trava não diz 'não é falta de notificação'", () => {
+  const r = relatorioNota(
+    {
+      referencia: "10/2",
+      numero: 10,
+      serie: 2,
+      invoiceId: "inv",
+      proximaAcao: "contigencia",
+      diagnostico: "O Mercado Livre não avisou o sistema.",
+      passos: [{ id: "contigencia", titulo: "Contingência", status: "info", detalhe: "Aviso já reenviado às 10:05; não repetido (janela de 30 min)." }],
+    },
+    [{ numero: 10, serie: 2 }],
+    "1",
+  );
+  assert.match(r.mensagem, /já reenviado às 10:05/);
+  assert.doesNotMatch(r.mensagem, /não é falta de notificação/);
 });

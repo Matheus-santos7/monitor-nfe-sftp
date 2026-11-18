@@ -1,5 +1,4 @@
-// Textos dos avisos (Chat / e-mail / WhatsApp). Portados dos nós Code do workflow n8n v1 —
-// a redação é mantida igual; ciclo-paridade.test.ts compara com o código do v1.
+// Textos dos avisos (Chat / e-mail / WhatsApp) enviados pelo n8n a partir de /ciclo e /ciclo/conferir.
 import type { ItemRastro, Passo, ProximaAcao } from "./diagnostico.js";
 import type { ResultadoSerie } from "./types.js";
 
@@ -90,7 +89,7 @@ export function mensagemResumo(opts: {
   const prefixo = opts.fake ? "[TESTE FAKE_NOTA] " : "";
 
   if (opts.integracaoOk && opts.avisos.length) {
-    // v1 mandava "100% OK" aqui (falso verde): sem teto ML a sequência não é confiável.
+    // Nunca "100% OK" aqui (falso verde): sem teto ML a sequência não é confiável.
     const titulo = `Monitoramento com cobertura parcial ${opts.horario}`;
     return {
       assunto: prefixo + titulo,
@@ -193,6 +192,8 @@ export function relatorioNota(diag: ItemLote, ausentesAgora: Nota[] | null, exec
     if (xmlNoFtp === true) oQueMonitorFez = "Reenviou o aviso ao sistema (contingência). Depois disso, o XML apareceu no FTP.";
     else if (xmlNoFtp === false) oQueMonitorFez = "Reenviou o aviso ao sistema (contingência) e conferiu de novo. A nota ainda não chegou ao FTP.";
     else oQueMonitorFez = "Reenviou o aviso ao sistema (contingência).";
+  } else if (c && c.status === "info") {
+    oQueMonitorFez = c.detalhe; // trava: aviso já reenviado na janela de 30 min
   } else if (c && c.status === "erro") {
     oQueMonitorFez = `Tentou reenviar o aviso ao sistema (contingência), mas não conseguiu: ${c.detalhe}`;
   } else if (proximaAcao === "esperar_entrega") {

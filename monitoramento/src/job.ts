@@ -1,7 +1,6 @@
 import { carregarConfig, identificadorCliente } from "./config.js";
 import { analisarSeries, aplicarFakeNota, expandirNotas, integracaoCompleta } from "./gaps.js";
 import { listarArquivosFtp } from "./sftp.js";
-import { enviarWebhooks, montarEventoPainel, montarPayload } from "./webhook.js";
 import { credenciaisMlConfiguradas } from "./ml-auth.js";
 import { buscarTetosPorSerie } from "./ml-invoices.js";
 import type { AppConfig, ResultadoSerie, TetoMl } from "./types.js";
@@ -124,18 +123,17 @@ export function retomarHistorico(): void {
 }
 
 /** Serializa as checagens: quem chega com outra em curso espera ela terminar (n8n + loop do painel). */
-export function executarJob(config?: AppConfig, opcoes?: { notificar?: boolean }): Promise<ResultadoJob> {
-  const rodada = fila.then(() => rodarJob(config, opcoes));
+export function executarJob(config?: AppConfig): Promise<ResultadoJob> {
+  const rodada = fila.then(() => rodarJob(config));
   fila = rodada.catch(() => undefined);
   return rodada;
 }
 
-async function rodarJob(config?: AppConfig, opcoes?: { notificar?: boolean }): Promise<ResultadoJob> {
+async function rodarJob(config?: AppConfig): Promise<ResultadoJob> {
   emAndamento = true;
   const inicio = Date.now();
   const avisos: string[] = [];
   const cfg = config ?? carregarConfig();
-  const notificar = opcoes?.notificar !== false;
 
   try {
     const identificador = identificadorCliente(cfg);
@@ -180,10 +178,6 @@ async function rodarJob(config?: AppConfig, opcoes?: { notificar?: boolean }): P
             (r.ultimaMlNoFtp === false ? ` (última ML ${r.tetoMl} ausente no FTP)` : ""),
         );
       }
-    }
-
-    if (notificar) {
-      await enviarWebhooks(cfg, montarPayload(cfg, resultados), montarEventoPainel(cfg, resultados));
     }
 
     const forcado = aplicarFakeNota(

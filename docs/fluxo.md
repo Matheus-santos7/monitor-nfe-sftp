@@ -2,11 +2,11 @@
 
 Séries, seller e tenant vêm do `.env` / `config.yml`.
 
-> **Workflow v2** (`workflows/monitor-sftp-v2.json`): os passos 1–6 abaixo rodam dentro do monitor via `POST /ciclo` e `POST /ciclo/conferir`; o n8n só agenda, faz o Wait (`espera` = 10 min / 2 min) e envia `mensagens[]`. Sem teto do ML e sem furo visível, o aviso é **"cobertura parcial"**, nunca "100% OK". Ver [ADR-004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md). O v1 (`monitor-sftp.json`) segue no repositório para rollback.
+> Workflow `workflows/monitor-sftp.json`: os passos 1–6 abaixo rodam dentro do monitor via `POST /ciclo` e `POST /ciclo/conferir`; o n8n só agenda, faz o Wait (`espera` = 10 min / 2 min) e envia `mensagens[]`. Sem teto do ML e sem furo visível, o aviso é **"cobertura parcial"**, nunca "100% OK". Ver [ADR-004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md).
 
 ## 1. Checagem (monitor)
 
-`POST /executar` — o **n8n** é o relógio (Schedule Trigger, seg–sex de hora em hora das 8h às 18h). O monitor não agenda sozinho.
+`POST /ciclo` — o **n8n** é o relógio (Schedule Trigger, seg–sex de hora em hora das 8h às 18h). O monitor não agenda sozinho.
 
 1. Lista XMLs nos diretórios SFTP (`config.yml`).
 2. Baixa o ZIP do ML **só do dia atual** (`ML_TETO_DIAS=1`):
@@ -21,14 +21,14 @@ Documentação ML: [Gestão e Consulta de Notas Fiscais](https://developers.merc
 
 ## 2. Se a integração está 100% OK
 
-n8n envia Google Chat / e-mail / WhatsApp: última NF do ML está no FTP e não há furos.
+O `/ciclo` devolve `status: ok` e o resumo em `mensagens[]`; o n8n envia Google Chat / e-mail / WhatsApp. Com avisos (ex.: sem teto ML) e sem furo visível, o status é `degradado` e o texto é "cobertura parcial".
 
 ## 3. Se há NF ausente
 
 Para **cada** `numero/serie` ausente no mesmo ciclo (sem teto de 5):
 
-1. `GET /ml/invoice?numero=&serie=` → `invoice_id` + chave (mesmo ZIP).
-2. `POST /diagnostico` consulta o MySQL via SSH:
+1. Localiza `invoice_id` + chave no mesmo ZIP do ML.
+2. Consulta o MySQL via SSH (um túnel para o ciclo inteiro):
 
 | Passo | SQL (ideia) | Significado |
 |---|---|---|
@@ -69,9 +69,10 @@ Só quando o ML **não** notificou o gateway.
 }
 ```
 
-3. n8n diagnostica **cada** NF ausente (uma por vez). Só então espera **2 minutos** (contingência) ou **10 minutos** (envio FTP pendente) **uma vez para o lote**.
-4. Confere o SFTP de **todas** as notas do lote. Se ainda faltar alguma, espera mais 2 minutos e confere de novo.
-5. Avisa o resultado de cada NF e um resumo do lote (`3/5 no FTP`, etc.).
+3. O monitor não renotifica a mesma invoice duas vezes em 30 min (trava contra execução repetida).
+4. O `/ciclo` diagnostica **cada** NF ausente (uma por vez). Só então o n8n espera **2 minutos** (contingência) ou **10 minutos** (envio FTP pendente) **uma vez para o lote**.
+5. `POST /ciclo/conferir` confere o SFTP de **todas** as notas do lote. Se ainda faltar alguma, o n8n espera mais 2 minutos e confere de novo.
+6. Avisa o resultado de cada NF e um resumo do lote (`3/5 no FTP`, etc.).
 
 ## 6. Relatório
 
@@ -84,7 +85,7 @@ Chat, e-mail e WhatsApp recebem um texto nesta ordem:
 5. **O que fazer** — nada / aguardar / acionar o time técnico.
 6. **Rastro técnico** — consultas na ordem: tabela, filtro, linhas, ids e status; o que não rodou fica explícito; reconsulta de entrega e SFTP no final.
 
-O n8n não concatena o diagnóstico cru com a linha do SFTP: ele remonta o resultado final depois da reconsulta.
+O texto final é montado pelo monitor (`relatorio.ts`) depois da reconferência do FTP; o n8n só envia.
 
 ## FAKE_NOTA
 

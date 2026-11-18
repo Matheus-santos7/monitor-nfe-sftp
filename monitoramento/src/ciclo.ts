@@ -30,14 +30,14 @@ export type DepsCiclo = {
 
 export function depsReais(cfg: AppConfig): DepsCiclo {
   return {
-    checar: () => executarJob(cfg, { notificar: false }),
+    checar: () => executarJob(cfg),
     validarMl: validarUsuarioMl,
     localizar: (n) => localizarInvoicePorNf(n),
     diagnosticar: diagnosticarNota,
   };
 }
 
-/** CONTINGENCIA=off → diagnostica mas não renotifica (homologação / rodar v1 e v2 lado a lado). */
+/** CONTINGENCIA=off → diagnostica mas não renotifica (homologação / testes ao vivo). */
 export function contingenciaLigada(): boolean {
   return !/^(off|false|0|no)$/i.test(process.env.CONTINGENCIA?.trim() ?? "");
 }
@@ -65,7 +65,7 @@ export async function rodarCiclo(deps: DepsCiclo, execucao: string, agora = new 
     return fim({ lote: [], espera: "nenhuma", mensagens: [resumo] });
   }
 
-  const me = await deps.validarMl(); // falha aqui = token ML inválido → erro HTTP → Error Handler do n8n (igual v1)
+  const me = await deps.validarMl(); // falha aqui = token ML inválido → erro HTTP → Error Handler do n8n
   if (!r.notasAusentes.length) {
     return fim({ lote: [], espera: "nenhuma", mensagens: [mensagemSerieSemXml(r.identificador, execucao)] });
   }
@@ -104,7 +104,7 @@ async function diagnosticarItem(deps: DepsCiclo, nota: Nota, mlUserId: string, e
       mensagem: d.mensagem,
     };
   } catch (erro) {
-    // v1 abortava a execução inteira; aqui a NF segue no lote e o relatório pede o time técnico.
+    // Falha numa NF não derruba o ciclo: ela segue no lote e o relatório pede o time técnico.
     return {
       referencia,
       numero: nota.numero,

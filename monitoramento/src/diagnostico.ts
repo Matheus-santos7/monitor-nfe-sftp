@@ -196,13 +196,6 @@ function rotuloInvoice(status: unknown): string {
   return s || "sem status";
 }
 
-export type ExtraConclusao = {
-  xmlNoFtp?: boolean | null;
-  classificacaoEntregaAposEspera?: ReturnType<typeof classificarEntregas> | null;
-  entregaDetalhe?: string | null;
-  executionId?: string | number | null;
-};
-
 function celula(v: unknown): string {
   if (v == null || v === "") return "null";
   if (v instanceof Date && !Number.isNaN(v.getTime())) return horarioTabelaEBrasilia(v);
@@ -338,10 +331,7 @@ function rastroDoEstado(r: Omit<RelatorioDiagnostico, "assunto" | "mensagem">): 
   return itens;
 }
 
-export function formatarRastro(
-  r: Omit<RelatorioDiagnostico, "assunto" | "mensagem">,
-  extra: ExtraConclusao = {},
-): string {
+export function formatarRastro(r: Omit<RelatorioDiagnostico, "assunto" | "mensagem">): string {
   const itens = rastroDoEstado(r);
   const linhas: string[] = ["Rastro técnico"];
   linhas.push(`invoice_id=${r.invoiceId}${r.chave ? `  chave=${r.chave}` : ""}`);
@@ -363,89 +353,29 @@ export function formatarRastro(
     }
     linhas.push(`   → ${item.linhas} linha(s)${item.detalhe ? ` — ${item.detalhe}` : ""}`);
   }
-  const n0 = itens.length;
-  if (extra.classificacaoEntregaAposEspera != null || extra.xmlNoFtp != null) {
-    linhas.push("");
-    linhas.push(`${n0 + 1}. Reconsulta após espera (n8n)`);
-    if (extra.classificacaoEntregaAposEspera != null) {
-      const extraDet = extra.entregaDetalhe ? ` — ${extra.entregaDetalhe}` : "";
-      linhas.push(`   POST /diagnostico/entrega → ${extra.classificacaoEntregaAposEspera}${extraDet}`);
-    }
-    if (extra.xmlNoFtp === true) linhas.push("   Rechecar SFTP → XML encontrado");
-    if (extra.xmlNoFtp === false) linhas.push("   Rechecar SFTP → XML ainda ausente");
-  }
-  if (extra.executionId != null && String(extra.executionId).trim()) {
-    linhas.push("");
-    linhas.push(`execução n8n=${extra.executionId}`);
-  }
   return linhas.join("\n");
 }
 
-function oQueMonitorFez(
-  r: Omit<RelatorioDiagnostico, "assunto" | "mensagem">,
-  xmlNoFtp: boolean | null,
-): string {
+function oQueMonitorFez(r: Omit<RelatorioDiagnostico, "assunto" | "mensagem">): string {
   const contigencia = r.passos.find((p) => p.id === "contigencia");
-  if (contigencia?.status === "ok") {
-    if (xmlNoFtp === true) {
-      return "Reenviou o aviso ao sistema (contingência). Depois disso, o XML apareceu no FTP.";
-    }
-    if (xmlNoFtp === false) {
-      return "Reenviou o aviso ao sistema (contingência) e conferiu de novo. A nota ainda não chegou ao FTP.";
-    }
-    return "Reenviou o aviso ao sistema (contingência).";
-  }
+  if (contigencia?.status === "ok") return "Reenviou o aviso ao sistema (contingência).";
+  if (contigencia?.status === "info") return contigencia.detalhe; // trava: aviso já reenviado na janela
   if (contigencia?.status === "erro") {
     return `Tentou reenviar o aviso ao sistema (contingência), mas não conseguiu: ${contigencia.detalhe}`;
   }
-  if (r.proximaAcao === "esperar_entrega") {
-    if (xmlNoFtp === true) return "Aguardou o envio ao FTP. O XML apareceu na pasta.";
-    if (xmlNoFtp === false) return "Aguardou o envio ao FTP, mas o arquivo ainda não apareceu na pasta.";
-    return "A nota já estava no Nerus; o envio ao FTP ainda estava em andamento.";
-  }
-  if (r.proximaAcao === "rechecar_ftp") {
-    if (xmlNoFtp === true) return "Conferiu o FTP e encontrou o XML.";
-    if (xmlNoFtp === false) {
-      return "O envio ao FTP já tinha sido disparado, mas o arquivo ainda não estava na pasta.";
-    }
-    return "O envio ao FTP já tinha sido disparado. Falta conferir se o XML chegou na pasta.";
-  }
+  if (r.proximaAcao === "esperar_entrega") return "A nota já estava no Nerus; o envio ao FTP ainda estava em andamento.";
+  if (r.proximaAcao === "rechecar_ftp") return "O envio ao FTP já tinha sido disparado. Falta conferir se o XML chegou na pasta.";
   return "Não reenviou o aviso: o problema não é falta de notificação do Mercado Livre.";
 }
 
-function resultadoHumano(opts: {
-  xmlNoFtp: boolean | null;
-  proximaAcao: ProximaAcao;
-  entregaAposEspera: ExtraConclusao["classificacaoEntregaAposEspera"];
-}): { banner: string; oQueFazer: string; assuntoSufixo: string; resolvido: boolean; precisaAdmin: boolean } {
-  if (opts.xmlNoFtp === true) {
-    return {
-      banner: "✅ Resolvido — o XML da nota já está no FTP.",
-      oQueFazer: "Nada a fazer.",
-      assuntoSufixo: "resolvido",
-      resolvido: true,
-      precisaAdmin: false,
-    };
-  }
-  if (opts.xmlNoFtp === false && opts.entregaAposEspera === "enviada") {
-    return {
-      banner: "⏳ Em andamento — o envio ao FTP já foi disparado, mas o arquivo ainda não apareceu na pasta.",
-      oQueFazer: "Aguardar o próximo ciclo de monitoramento. Se a nota não aparecer, acionar o time técnico.",
-      assuntoSufixo: "envio em andamento",
-      resolvido: false,
-      precisaAdmin: true,
-    };
-  }
-  if (opts.xmlNoFtp === false) {
-    return {
-      banner: "⚠️ Ainda não resolvido — a nota continua ausente no FTP.",
-      oQueFazer: "Acionar o time técnico.",
-      assuntoSufixo: "ainda ausente no FTP",
-      resolvido: false,
-      precisaAdmin: true,
-    };
-  }
-  if (opts.proximaAcao === "contigencia") {
+function resultadoHumano(proximaAcao: ProximaAcao): {
+  banner: string;
+  oQueFazer: string;
+  assuntoSufixo: string;
+  resolvido: boolean;
+  precisaAdmin: boolean;
+} {
+  if (proximaAcao === "contigencia") {
     return {
       banner: "⚠️ Pendência — o Mercado Livre não avisou o sistema.",
       oQueFazer: "O monitor já reenviou o aviso. Aguardar 1–3 minutos e conferir se o XML chegou ao FTP.",
@@ -454,7 +384,7 @@ function resultadoHumano(opts: {
       precisaAdmin: true,
     };
   }
-  if (opts.proximaAcao === "esperar_entrega") {
+  if (proximaAcao === "esperar_entrega") {
     return {
       banner: "⏳ Em andamento — a nota está no Nerus, aguardando o envio ao FTP.",
       oQueFazer: "Aguardar cerca de 10 minutos e conferir de novo.",
@@ -463,7 +393,7 @@ function resultadoHumano(opts: {
       precisaAdmin: true,
     };
   }
-  if (opts.proximaAcao === "rechecar_ftp") {
+  if (proximaAcao === "rechecar_ftp") {
     return {
       banner: "⏳ Em andamento — conferindo se o XML já está no FTP.",
       oQueFazer: "Conferir o FTP. Se o XML não estiver lá, acionar o time técnico.",
@@ -481,48 +411,38 @@ function resultadoHumano(opts: {
   };
 }
 
-/** Texto para Chat/e-mail/WhatsApp. O n8n (Montar relatório do furo) remonta o mesmo formato depois de reconsultar o FTP. */
+/** Texto do diagnóstico logo após consultar o Nerus. O relatório depois da conferência no FTP é o `relatorioNota` (relatorio.ts). */
 export function concluirRelatorio(
   r: Omit<RelatorioDiagnostico, "assunto" | "mensagem">,
-  extra: ExtraConclusao = {},
 ): { assunto: string; mensagem: string; precisaAdmin: boolean; resolvido: boolean } {
-  const xmlNoFtp = extra.xmlNoFtp ?? null;
-  const resultado = resultadoHumano({
-    xmlNoFtp,
-    proximaAcao: r.proximaAcao,
-    entregaAposEspera: extra.classificacaoEntregaAposEspera ?? null,
-  });
-
-  const causaTitulo = xmlNoFtp === true ? "O que tinha acontecido:" : "O que aconteceu:";
+  const resultado = resultadoHumano(r.proximaAcao);
   const linhas: string[] = [
     `NF ${r.referencia}`,
     "",
     resultado.banner,
     resultado.oQueFazer,
     "",
-    causaTitulo,
+    "O que aconteceu:",
     r.diagnostico,
     "",
     "O que o monitor fez:",
-    oQueMonitorFez(r, xmlNoFtp),
+    oQueMonitorFez(r),
   ];
 
-  if (xmlNoFtp !== true) {
-    const pipeline = r.passos.filter((p) => p.id !== "contigencia");
-    const primeiroErro = pipeline.findIndex((p) => p.status === "erro");
-    const visiveis = primeiroErro >= 0 ? pipeline.slice(0, primeiroErro + 1) : pipeline;
-    if (visiveis.length) {
-      linhas.push("", "Onde a integração parou:");
-      for (const p of visiveis) {
-        linhas.push(p.detalhe ? `• ${p.titulo} — ${p.detalhe}` : `• ${p.titulo}`);
-      }
-      if (primeiroErro >= 0 && primeiroErro < pipeline.length - 1) {
-        linhas.push("Os passos seguintes ainda não rodaram por causa disso.");
-      }
+  const pipeline = r.passos.filter((p) => p.id !== "contigencia");
+  const primeiroErro = pipeline.findIndex((p) => p.status === "erro");
+  const visiveis = primeiroErro >= 0 ? pipeline.slice(0, primeiroErro + 1) : pipeline;
+  if (visiveis.length) {
+    linhas.push("", "Onde a integração parou:");
+    for (const p of visiveis) {
+      linhas.push(p.detalhe ? `• ${p.titulo} — ${p.detalhe}` : `• ${p.titulo}`);
+    }
+    if (primeiroErro >= 0 && primeiroErro < pipeline.length - 1) {
+      linhas.push("Os passos seguintes ainda não rodaram por causa disso.");
     }
   }
 
-  linhas.push("", formatarRastro(r, extra));
+  linhas.push("", formatarRastro(r));
 
   return {
     assunto: `NF-e ${r.referencia} — ${resultado.assuntoSufixo}`,
@@ -876,7 +796,7 @@ export async function diagnosticarNota(opts: {
     : decidirAcao(estado);
   let contigencia: RelatorioDiagnostico["contigencia"] = null;
 
-  // Trava contra renotificar a mesma invoice duas vezes (v1+v2 ativos, timeout do n8n seguido de "Executar agora").
+  // Trava contra renotificar a mesma invoice duas vezes (timeout do n8n seguido de "Executar agora", chamadas repetidas).
   const anterior =
     decisao.proximaAcao === "contigencia" && opts.executarContigencia !== false ? reservarContingencia(invoiceId) : null;
   if (anterior !== null) {

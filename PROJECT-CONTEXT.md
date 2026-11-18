@@ -22,7 +22,7 @@ Detectar NF-e autorizada no Mercado Livre que ainda não chegou ao SFTP do clien
 
 ## Fase atual
 
-Em produção para **1 cliente** (um container por cliente). Painel e histórico recém-criados. Regra de lote, espera e textos migrada para o monitor (`/ciclo`, ADR-004); workflow v2 sem nós Code, aguardando troca do v1 em produção.
+Em produção para **1 cliente** (um container por cliente). Painel e histórico recém-criados. Regra de lote, espera e textos no monitor (`/ciclo`, ADR-004); workflow n8n sem nós Code (`workflows/monitor-sftp.json`), aguardando ativação em produção no lugar do workflow antigo.
 
 ## Restrições
 
