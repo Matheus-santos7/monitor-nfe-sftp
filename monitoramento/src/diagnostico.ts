@@ -1,5 +1,5 @@
 import { queryNerus, type Linha } from "./nerus-db.js";
-import { renotificarInvoice } from "./nerus-contigencia.js";
+import { liberarContingencia, renotificarInvoice, reservarContingencia } from "./nerus-contigencia.js";
 
 export type Passo = {
   id: string;
@@ -876,7 +876,18 @@ export async function diagnosticarNota(opts: {
     : decidirAcao(estado);
   let contigencia: RelatorioDiagnostico["contigencia"] = null;
 
-  if (decisao.proximaAcao === "contigencia" && opts.executarContigencia !== false) {
+  // Trava contra renotificar a mesma invoice duas vezes (v1+v2 ativos, timeout do n8n seguido de "Executar agora").
+  const anterior =
+    decisao.proximaAcao === "contigencia" && opts.executarContigencia !== false ? reservarContingencia(invoiceId) : null;
+  if (anterior !== null) {
+    const hora = new Date(anterior).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+    passos.push({
+      id: "contigencia",
+      titulo: "Contingência",
+      status: "info",
+      detalhe: `Aviso já reenviado às ${hora}; não repetido (janela de 30 min).`,
+    });
+  } else if (decisao.proximaAcao === "contigencia" && opts.executarContigencia !== false) {
     try {
       if (!applicationId) throw new Error("Defina ML_APPLICATION_ID ou ML_CLIENT_ID no .env");
       contigencia = await renotificarInvoice({ invoiceId, mlUserId, applicationId });
@@ -887,6 +898,7 @@ export async function diagnosticarNota(opts: {
         detalhe: "Aviso reenviado ao sistema.",
       });
     } catch (erro) {
+      liberarContingencia(invoiceId);
       passos.push({
         id: "contigencia",
         titulo: "Contingência",
@@ -925,7 +937,7 @@ export async function diagnosticarNota(opts: {
       executado: false,
       filtro: `resource=${recurso}`,
       linhas: 0,
-      detalhe: "não disparada neste ciclo",
+      detalhe: passoContigencia?.status === "info" ? passoContigencia.detalhe : "não disparada neste ciclo",
     });
   } else {
     rastro.push({

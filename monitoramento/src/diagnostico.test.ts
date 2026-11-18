@@ -9,6 +9,8 @@ import {
   montarPassos,
   type RelatorioDiagnostico,
 } from "./diagnostico.js";
+import { comSessaoNerus, queryNerus } from "./nerus-db.js";
+import { JANELA_CONTINGENCIA_MS, liberarContingencia, reservarContingencia } from "./nerus-contigencia.js";
 
 test("classificarEntregas: SENT ganha de pending", () => {
   assert.equal(classificarEntregas([{ status: "PENDING" }, { status: "SENT" }]), "enviada");
@@ -228,4 +230,31 @@ test("relatório: envio disparado mas XML ainda não listado", () => {
   });
   assert.match(r.mensagem, /Em andamento/);
   assert.match(r.mensagem, /próximo ciclo/);
+});
+
+test("trava de contingência: mesma invoice não é renotificada duas vezes em 30 min", () => {
+  const t0 = Date.UTC(2026, 10, 18, 12, 0);
+  assert.equal(reservarContingencia("inv-trava", t0), null);
+  assert.equal(reservarContingencia("inv-trava", t0 + 5 * 60_000), t0);
+  assert.equal(reservarContingencia("outra-inv", t0 + 5 * 60_000), null);
+  assert.equal(reservarContingencia("inv-trava", t0 + JANELA_CONTINGENCIA_MS), null);
+  liberarContingencia("inv-trava");
+  assert.equal(reservarContingencia("inv-trava", t0 + JANELA_CONTINGENCIA_MS + 1), null);
+});
+
+test("sessão Nerus: queries do mesmo ciclo reaproveitam uma única abertura (falha não se repete por NF)", async () => {
+  const antes = process.env.NERUS_SSH_HOST;
+  delete process.env.NERUS_SSH_HOST; // abertura falha na hora, sem rede
+  try {
+    const erros = await comSessaoNerus(async () => [
+      await queryNerus("SELECT 1").catch((e: unknown) => e),
+      await queryNerus("SELECT 2").catch((e: unknown) => e),
+    ]);
+    assert.ok(erros[0] instanceof Error);
+    assert.equal(erros[0], erros[1]); // mesmo objeto = abriu uma vez só
+    const [a, b] = [await queryNerus("SELECT 1").catch((e: unknown) => e), await queryNerus("SELECT 2").catch((e: unknown) => e)];
+    assert.notEqual(a, b); // fora da sessão, cada query abre a sua
+  } finally {
+    if (antes !== undefined) process.env.NERUS_SSH_HOST = antes;
+  }
 });

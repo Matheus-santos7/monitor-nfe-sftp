@@ -6,6 +6,7 @@ import { executarJob, type ResultadoJob } from "./job.js";
 import { localizarInvoicePorNf, validarUsuarioMl } from "./ml-invoices.js";
 import { diagnosticarNota } from "./diagnostico.js";
 import { parseFakeNota } from "./gaps.js";
+import { comSessaoNerus } from "./nerus-db.js";
 import {
   decidirEsperaLote,
   horarioSaoPaulo,
@@ -70,7 +71,9 @@ export async function rodarCiclo(deps: DepsCiclo, execucao: string, agora = new 
   }
 
   const lote: ItemLote[] = [];
-  for (const nota of r.notasAusentes) lote.push(await diagnosticarItem(deps, nota, String(me.id), execucao));
+  await comSessaoNerus(async () => {
+    for (const nota of r.notasAusentes) lote.push(await diagnosticarItem(deps, nota, String(me.id), execucao));
+  });
   return fim({ lote, espera: decidirEsperaLote(lote.map((i) => i.proximaAcao)), mensagens: [] });
 }
 

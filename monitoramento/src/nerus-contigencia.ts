@@ -81,3 +81,20 @@ export async function renotificarInvoice(opts: {
   }
   return { notificationId, httpStatus: res.status };
 }
+
+export const JANELA_CONTINGENCIA_MS = 30 * 60_000;
+// shortcut: trava só em memória — um restart do monitor dentro da janela permite repetir; persistir se isso acontecer na prática.
+const reenviadas = new Map<string, number>();
+
+/** Reserva a contingência da invoice. Retorna o horário da anterior (ms) se já houve uma na janela; null = pode disparar. */
+export function reservarContingencia(invoiceId: string, agora = Date.now()): number | null {
+  const anterior = reenviadas.get(invoiceId);
+  if (anterior !== undefined && agora - anterior < JANELA_CONTINGENCIA_MS) return anterior;
+  reenviadas.set(invoiceId, agora);
+  return null;
+}
+
+/** Libera a reserva quando a renotificação falhou, para o próximo ciclo poder tentar de novo. */
+export function liberarContingencia(invoiceId: string): void {
+  reenviadas.delete(invoiceId);
+}

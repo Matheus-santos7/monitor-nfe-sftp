@@ -50,4 +50,5 @@ A sessão Dev Team de 2026-11-18 (`docs/team-sessions/`) classificou isso como b
 - O `ciclo-paridade.test.ts` roda o JS original do v1 e garante o mesmo texto. Ele deve ser apagado junto com o `workflows/monitor-sftp.json`.
 - Texto novo, que não existia no v1: "Monitoramento com cobertura parcial", enviado quando há avisos e nenhum furo visível.
 - Nunca ativar o v1 e o v2 ao mesmo tempo, porque a contingência rodaria em dobro.
-- O timeout do nó `/ciclo` é de 600 s. Muitas NFs no mesmo ciclo, cada uma abrindo SSH, podem se aproximar desse limite. Meça com um lote real.
+- Trava no monitor: a mesma invoice não é renotificada duas vezes em 30 min, mesmo com v1+v2 ativos ou com um "Executar agora" logo depois de um timeout do n8n (o `/ciclo` continua rodando no servidor quando o n8n desiste). A trava fica em memória, então um restart do monitor a zera.
+- Um `/ciclo` abre **um** túnel SSH + MySQL para todas as NFs (`comSessaoNerus`), em vez de um por query. Se a abertura falhar, todas as NFs do ciclo registram o erro na hora, sem esperar 20 s cada. O timeout de 600 s do nó `/ciclo` ainda precisa ser medido com um lote real.
