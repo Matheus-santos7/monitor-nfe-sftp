@@ -103,6 +103,8 @@ Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, am
 | `ML_TETO_CACHE_MIN` | Cache do ZIP do ML, em minutos (padrão 5). Suba se aparecer 429 |
 | `PAINEL_INTERVALO_MIN` | Checagem do painel, em minutos (padrão 5; `0` desliga) |
 | `FAKE_NOTA` | Força um furo de teste. Vazio em produção |
+| `MODO_AGENDA` / `AGENDA_CICLO` | Agenda do ciclo no próprio monitor: `off` (o n8n agenda), `sombra` (compara sem agir) ou `ativo` (substitui o n8n). Ver [docs/monitor.md](docs/monitor.md#agenda-e-avisos-migração-para-fora-do-n8n) |
+| `SMTP_*` | E-mail dos avisos quando o monitor avisa sozinho (`MODO_AGENDA=ativo`) |
 
 Depois de mudar o `.env`: `docker compose up -d --force-recreate monitor-sftp n8n`. Depois de mudar o `config.yml`: `docker compose restart monitor-sftp`.
 
@@ -126,7 +128,6 @@ Siga **[docs/deploy.md](docs/deploy.md)**: acessos, o que nunca fazer, deploy, t
 
 - Sem teto do ML (sem token ou sem emissão no dia), o limite cai no máximo do FTP, e furos no fim da sequência ficam invisíveis. Por isso o status vira "cobertura parcial".
 - `GET /users/{id}/invoices/search` do ML retorna 403. O `invoice_id` sai do ZIP ([ADR-001](docs/decisions/0001-relatorio-zip-em-vez-de-search.md)).
-- A trava da contingência (30 min por invoice) fica em memória e zera num restart do monitor.
 - O agendamento é seg–sex, das 8h às 18h. Um furo fora desse horário só é avisado no próximo ciclo; o painel continua checando.
 
 ## Documentação

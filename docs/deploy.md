@@ -108,6 +108,21 @@ A ordem importa.
 5. Volte `CONTINGENCIA` para `on` (ou remova a linha), recrie o monitor e **ative** o workflow.
 6. Na próxima hora cheia, confira no n8n que a execução agendada terminou verde e que o painel atualizou.
 
+## 3b. Sair do n8n: o monitor passa a agendar e avisar
+
+O monitor já faz sozinho o que o workflow faz ([ADR-005](decisions/0005-agenda-e-avisos-no-monitor.md)). A troca acontece em três passos, sem buraco no monitoramento.
+
+1. **Sombra (2–3 dias úteis):** coloque `MODO_AGENDA=sombra` no `.env` da VPS e recrie o monitor. O log mostra `Agenda do ciclo em SOMBRA`.
+   - O n8n continua ativo e é quem avisa.
+   - O monitor roda nos mesmos horários **sem contingência e sem avisos**. Compare, no painel ("Ciclo de monitoramento") e no log (`▶ Ciclo agenda-…`), os furos e o resultado com as execuções do n8n.
+2. **E-mail:** copie a credencial SMTP do n8n (Credentials) para `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` e `SMTP_PASS` no `.env`. Confira também `GOOGLE_CHAT_WEBHOOK_URL`, `WHATSAPP_*` e `ALERT_EMAIL_*`.
+3. **Troca:** no editor do n8n, **desative** o workflow **1. Monitor SFTP NF-e (ciclo)**. No mesmo momento, troque para `MODO_AGENDA=ativo` e recrie o monitor.
+   - O log deve mostrar `Agenda do ciclo ATIVA`, sem o aviso "nenhum canal de aviso configurado".
+   - Use o botão **Executar agora** do painel e confira se os avisos chegaram nos três canais.
+4. **Observe um dia.** Se der errado: volte `MODO_AGENDA=off`, recrie o monitor e reative o workflow no n8n.
+
+Só depois disso estável o n8n, o Postgres e o Traefik podem sair do compose.
+
 ## 4. Rollback
 
 O monitor e o workflow voltam juntos. Um não funciona com a versão antiga do outro.

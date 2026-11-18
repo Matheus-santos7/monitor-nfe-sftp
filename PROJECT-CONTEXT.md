@@ -8,7 +8,7 @@ Detectar NF-e autorizada no Mercado Livre que ainda não chegou ao SFTP do clien
 
 ## Stack
 
-- **n8n** — agenda, esperas (Wait 2/10 min), orquestração do lote e notificações (Google Chat, e-mail, WhatsApp). Postgres é só do n8n.
+- **n8n** — hoje ainda agenda, espera e notifica; em saída (ADR-005), o monitor assume com `MODO_AGENDA`. Postgres é só do n8n.
 - **monitor-sftp** — Node 22 + TypeScript, `http` nativo, sem framework. Lê SFTP (`ssh2-sftp-client`), relatório ZIP de NF-e do ML (OAuth com refresh de uso único), MySQL do gateway via túnel SSH (`ssh2` + `mysql2`).
 - **Painel** — HTML único servido pelo monitor (`/painel`), checagem silenciosa a cada `PAINEL_INTERVALO_MIN`, histórico por dia em `data/historico/AAAAMMDD.json`.
 - Docker Compose; produção em VPS com Traefik (monitor não exposto, acesso por túnel).
@@ -22,7 +22,7 @@ Detectar NF-e autorizada no Mercado Livre que ainda não chegou ao SFTP do clien
 
 ## Fase atual
 
-Em produção para **1 cliente** (um container por cliente). Painel e histórico recém-criados. Regra de lote, espera e textos no monitor (`/ciclo`, ADR-004); workflow n8n sem nós Code (`workflows/monitor-sftp.json`), aguardando ativação em produção no lugar do workflow antigo.
+Em produção para **1 cliente** (um container por cliente). Painel e histórico recém-criados. Regra de lote, espera e textos no monitor (`/ciclo`, ADR-004). Saída do n8n em andamento (ADR-005): o monitor já agenda, espera e avisa com `MODO_AGENDA` (off/sombra/ativo); falta a transição em produção e remover n8n/Postgres/Traefik do compose.
 
 ## Restrições
 

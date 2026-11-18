@@ -35,6 +35,7 @@ Comece pelo [README da raiz](../README.md): visão geral, glossário, como rodar
 | [0002](decisions/0002-teto-da-sequencia-pelo-ml.md) | O teto da sequência é a última NF do ML, não a última do FTP |
 | [0003](decisions/0003-diagnostico-via-ssh-mysql.md) | Diagnóstico no MySQL do Nerus via bastion SSH. A parte de orquestração foi substituída pelo ADR-004 |
 | [0004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md) | A regra fica no monitor (`/ciclo`); o n8n só agenda, espera e avisa |
+| [0005](decisions/0005-agenda-e-avisos-no-monitor.md) | O monitor também agenda, espera e avisa (`MODO_AGENDA`); o n8n sai em etapas |
 
 ADRs são registro histórico: não se reescrevem, só se substituem por um novo.
 

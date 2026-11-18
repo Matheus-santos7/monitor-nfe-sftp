@@ -21,6 +21,8 @@ O monitor é um serviço Node 22 em TypeScript, com `http` nativo e sem framewor
 | `relatorio.ts` | Textos dos avisos: resumo, série sem XML, relatório por NF, resumo do lote. Funções puras |
 | `historico.ts` | Arquivo JSON por dia, resumo de saúde (`resumirDia`) |
 | `painel.ts` | O HTML do painel, numa string. O JS dele lê `/status` e `/historico` |
+| `orquestrador.ts` | **Ciclo completo sem n8n:** ciclo → espera do lote → conferência (→ 2 min → de novo) → avisos; aviso de falha; uma rodada por vez; modo da agenda |
+| `avisos.ts` | Envio para Google Chat, WhatsApp (`fetch`) e e-mail (SMTP, `nodemailer`). Cada canal é independente |
 
 As integrações (SFTP, ML e Nerus) estão detalhadas em [integracoes.md](integracoes.md), e o painel em [painel.md](painel.md).
 
@@ -45,11 +47,26 @@ ciclo.ts   checar() ─────────► job.ts executarJob (fila)
 
 O `POST /ciclo/conferir` só chama `checar()` de novo e monta os relatórios com `relatorioNota` e `relatorioConferencia`.
 
+## Agenda e avisos (migração para fora do n8n)
+
+Com `MODO_AGENDA`, o monitor pode fazer sozinho o que o workflow do n8n faz:
+
+| `MODO_AGENDA` | O que acontece |
+|---|---|
+| `off` (padrão) | Nada é agendado. O n8n chama `/ciclo` e avisa. O botão "Executar agora" do painel fica desligado |
+| `sombra` | No horário de `AGENDA_CICLO`, roda o ciclo completo **sem contingência** e **sem enviar avisos** (só log e painel). Serve para comparar com o n8n |
+| `ativo` | O monitor agenda, espera, confere e avisa. O workflow do n8n precisa estar **desativado** |
+
+- **Agenda:** `node-cron` com `AGENDA_CICLO` (padrão `0 8-18 * * 1-5`, fuso America/Sao_Paulo). Se o horário chega com uma rodada ainda em andamento (por exemplo, na espera de 10 min), a nova é pulada, com log.
+- **Avisos:** `avisos.ts`, com o mesmo corpo que o n8n mandava. Um canal sem variável é pulado. Se nenhum canal entregar um aviso, isso vira um evento no histórico e aparece no painel.
+- **Falha no ciclo** (SFTP fora, token do ML, erro na conferência): vira o aviso "🚨 O ciclo de monitoramento falhou", com a etapa e o erro. É o antigo Error Handler do n8n.
+- **Restart durante a espera:** o lote em memória se perde. O próximo horário redescobre os furos, e a trava da contingência (em disco) impede que ela saia em dobro.
+
 ## Estado e concorrência
 
 - **Fila de checagem** (`job.ts`, `executarJob`): uma checagem por vez. Se o painel e o n8n pedirem juntos, o segundo espera. Isso evita duas renovações do token do ML ao mesmo tempo.
-- **O que fica em memória e some num restart:** o estado do painel (`/status`), a idade dos furos (retomada do histórico do dia na subida), o cache do ZIP e a trava da contingência.
-- **O que fica em disco**, em `monitoramento/data/`, montado em `/app/data`: o histórico (`historico/AAAAMMDD.json`) e os tokens do ML (`ml-tokens.json`).
+- **O que fica em memória e some num restart:** o estado do painel (`/status`), a idade dos furos (retomada do histórico do dia na subida), o cache do ZIP e o andamento do ciclo do orquestrador.
+- **O que fica em disco**, em `monitoramento/data/`, montado em `/app/data`: o histórico (`historico/AAAAMMDD.json`), os tokens do ML (`ml-tokens.json`) e a trava da contingência (`contingencias.json`, `CONTINGENCIAS_PATH`).
 - **O lote não fica em lugar nenhum:** ele vai e volta no corpo, entre o n8n e o monitor.
 
 ## Tratamento de erro: o que vira o quê
@@ -73,8 +90,8 @@ npm run check      # tsc --noEmit + testes. É o que o CI roda
 npm test           # só os testes (tsx, sem checar tipos)
 ```
 
-- O framework é o `node:test`. Os arquivos ficam ao lado do código: `ciclo.test.ts`, `diagnostico.test.ts`, `gaps.test.ts`, `http.test.ts`, `job.test.ts`, `ml-auth.test.ts`, `ml-invoices.test.ts`.
-- **Nenhum teste acessa a rede.** O ciclo recebe as dependências por `DepsCiclo` (`checar`, `validarMl`, `localizar`, `diagnosticar`), e o `diagnosticarNota` recebe `{ consultar, renotificar }`. Nos testes, todas são falsas.
+- O framework é o `node:test`. Os arquivos ficam ao lado do código: `avisos.test.ts`, `ciclo.test.ts`, `diagnostico.test.ts`, `gaps.test.ts`, `http.test.ts`, `job.test.ts`, `ml-auth.test.ts`, `ml-invoices.test.ts`, `orquestrador.test.ts`.
+- **Nenhum teste acessa a rede.** O ciclo recebe as dependências por `DepsCiclo` (`checar`, `validarMl`, `localizar`, `diagnosticar`), o `diagnosticarNota` recebe `{ consultar, renotificar }` e o orquestrador recebe `DepsOrquestrador` (`ciclo`, `conferir`, `enviar`, `esperar`…). Nos testes, todas são falsas: a espera de 10 min dura zero.
 - `job.test.ts` define `HISTORICO_DIR` para uma pasta temporária, para não sujar o `data/` real.
 - Mudou uma regra ou um texto? Escreva primeiro o teste que falha, depois mude o código.
 

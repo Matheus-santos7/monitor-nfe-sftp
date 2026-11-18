@@ -12,6 +12,7 @@ Rede Docker (n8n): `http://monitor-sftp:8080`.
 | `GET /status` | sim | painel | Última checagem, em memória |
 | `GET /historico?dia=` | sim | painel | Histórico e saúde do dia |
 | `POST /ciclo` | sim | n8n | **Pode disparar contingência real** |
+| `POST /ciclo/agora` | sim | botão do painel | Ciclo completo em segundo plano (com `MODO_AGENDA` sombra/ativo) |
 | `POST /ciclo/conferir` | sim | n8n | Só leitura (SFTP + ML) |
 | `GET /ml/teto` | sim | você (depuração) | Só leitura (ZIP do ML) |
 
@@ -41,6 +42,17 @@ Sem retry no n8n: repetir `/ciclo` repetiria a contingência. O monitor segura a
 
 `POST /ciclo/conferir` · corpo `{ "execucao", "notas": [...notasAusentes], "lote": [...lote] }` (os dois vêm da resposta do `/ciclo`). Rechecha o FTP e devolve `aindaFaltam`, `faltando[]`, `noFtp`, `total` e `mensagens[]` (um relatório por NF + resumo do lote). Só leitura — pode ter retry.
 
+## `POST /ciclo/agora`
+
+Roda o ciclo completo **dentro do monitor**: ciclo, espera do lote, conferência e envio dos avisos. É o que o botão "Executar agora" do painel chama. Responde na hora, sem esperar o fim:
+
+| Código | Quando |
+|---|---|
+| `202` | Iniciou. O andamento aparece em `GET /status` → `ciclo` |
+| `409` | `MODO_AGENDA=off` (o n8n ainda é quem agenda) ou já há um ciclo em andamento |
+
+Com `MODO_AGENDA=sombra`, roda sem contingência e não envia avisos.
+
 ## `GET /health`
 
 ```json
@@ -49,7 +61,7 @@ Sem retry no n8n: repetir `/ciclo` repetiria a contingência. O monitor segura a
 
 ## `GET /painel` · `GET /status`
 
-`/painel?token=...` é a página; ela lê `/status` a cada 1 min. `/status` devolve o estado da última checagem em memória: `ocupado`, `intervaloMin`, `cliente`, `status` (`ok` · `alerta` · `erro` · `aguardando`), `checadoEm`, `erro`, `avisos[]`, `resultado` (tabela abaixo) e `ausentesDesde` (`"numero/serie"` → ISO da primeira checagem em que o furo apareceu). O estado zera quando o container reinicia. Se já houver uma checagem em andamento, a próxima espera ela terminar.
+`/painel?token=...` é a página; ela lê `/status` a cada 1 min. `/status` devolve o estado da última checagem em memória: `ocupado`, `intervaloMin`, `cliente`, `ciclo` (modo da agenda, próximo horário, etapa em andamento, resultado do último ciclo), `status` (`ok` · `alerta` · `erro` · `aguardando`), `checadoEm`, `erro`, `avisos[]`, `resultado` (tabela abaixo) e `ausentesDesde` (`"numero/serie"` → ISO da primeira checagem em que o furo apareceu). O estado zera quando o container reinicia. Se já houver uma checagem em andamento, a próxima espera ela terminar.
 
 Campos de `resultado`:
 

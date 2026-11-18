@@ -66,7 +66,7 @@ Só acontece quando o ML **não** avisou o gateway **e** `CONTINGENCIA=on`, que 
 1. Faz login na API do Nerus (`NERUS_AUTH_URL`).
 2. Envia `POST {NERUS_NOTIFICATION_URL}?clientId={tenant}` com o aviso no formato do feed `invoices` (`topic`, `resource=/users/<seller>/invoices/<invoiceId>`, um `_id` novo).
 
-**Trava:** a mesma invoice não é renotificada duas vezes em 30 min. Isso protege contra um "Executar agora" logo depois de um timeout, ou contra dois workflows ativos ao mesmo tempo. A trava fica em memória: um restart do monitor zera a trava. Se a renotificação falhar, a trava é liberada e o próximo ciclo tenta de novo.
+**Trava:** a mesma invoice não é renotificada duas vezes em 30 min. Isso protege contra um "Executar agora" logo depois de um timeout, ou contra dois agendadores ativos ao mesmo tempo. A trava fica gravada em `data/contingencias.json` e sobrevive a um restart. Se a renotificação falhar, a trava é liberada e o próximo ciclo tenta de novo.
 
 Com `CONTINGENCIA` diferente de `on`, o diagnóstico roda inteiro, mas o relatório diz "não disparada neste ciclo".
 

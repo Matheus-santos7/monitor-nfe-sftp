@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Atualiza a parte de orquestração do ADR-003. A parte de SSH e MySQL do ADR-003 continua valendo.
+Accepted. A parte de orquestração (n8n agenda, espera e avisa) está sendo substituída pelo [ADR-005](0005-agenda-e-avisos-no-monitor.md). Atualiza a parte de orquestração do ADR-003. A parte de SSH e MySQL do ADR-003 continua valendo.
 
 ## Date
 
