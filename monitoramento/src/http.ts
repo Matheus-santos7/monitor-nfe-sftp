@@ -193,6 +193,7 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
       "Cache-Control": "no-store",
       "Referrer-Policy": "no-referrer", // o token está na URL do painel
       "X-Content-Type-Options": "nosniff",
+      "X-Robots-Tag": "noindex, nofollow", // painel interno com dados fiscais: nunca indexar
     });
     res.end(PAINEL_HTML);
     return;

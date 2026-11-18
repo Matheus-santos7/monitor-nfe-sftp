@@ -4,6 +4,7 @@ export const PAINEL_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>Painel NF-e SFTP</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --tx:#1b1f24; --mut:#5f6b7a; --bd:#dde2e8;
