@@ -2,6 +2,8 @@
 
 Séries, seller e tenant vêm do `.env` / `config.yml`.
 
+> **Workflow v2** (`workflows/monitor-sftp-v2.json`): os passos 1–6 abaixo rodam dentro do monitor via `POST /ciclo` e `POST /ciclo/conferir`; o n8n só agenda, faz o Wait (`espera` = 10 min / 2 min) e envia `mensagens[]`. Sem teto do ML e sem furo visível, o aviso é **"cobertura parcial"**, nunca "100% OK". Ver [ADR-004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md). O v1 (`monitor-sftp.json`) segue no repositório para rollback.
+
 ## 1. Checagem (monitor)
 
 `POST /executar` — o **n8n** é o relógio (Schedule Trigger, seg–sex de hora em hora das 8h às 18h). O monitor não agenda sozinho.
