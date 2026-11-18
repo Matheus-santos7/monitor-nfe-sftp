@@ -15,6 +15,30 @@ Você precisa de:
 
 Se faltar algum desses acessos, pare e peça ao responsável pelo projeto. Não tente contornar.
 
+## Como a infraestrutura está montada
+
+Tudo roda em Docker Compose, num container por serviço. Cada cliente tem a sua instalação (pasta, `.env`, `config.yml`).
+
+| Arquivo | Quando entra | O que define |
+|---|---|---|
+| `docker-compose.yml` | sempre, local e na VPS | `postgres` (banco **só do n8n**), `n8n`, `monitor-sftp`. As portas ficam só em `127.0.0.1` (n8n 5678, monitor 8081). `CONTINGENCIA` padrão `off` |
+| `docker-compose.prod.yml` | só na VPS, junto com o base | `traefik` com HTTPS (Let's Encrypt) na frente do n8n, mais `CONTINGENCIA=on` no monitor |
+
+Na VPS, ponha `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml` no `.env`. Com isso, todo `docker compose …` usa os dois arquivos. Sem o overlay, a contingência fica desligada e o n8n fica sem HTTPS, **sem dar erro nenhum**.
+
+O que fica no disco do host, fora do Git:
+
+| Caminho no host | No container | Conteúdo |
+|---|---|---|
+| `.env` | variáveis + `/app/.env.host` no monitor | Segredos. O monitor também grava ali o token do ML renovado |
+| `monitoramento/config.yml` | `/app/config.yml` (só leitura) | Cliente, SFTP, séries |
+| `monitoramento/data/` | `/app/data` | `historico/AAAAMMDD.json` e `ml-tokens.json` (token do ML, com prioridade sobre o `.env`) |
+| `secrets/bastion.pem` (ou `NERUS_SSH_KEY_HOST_PATH`) | `/run/secrets/bastion.pem` | Chave SSH do bastion do Nerus, `chmod 600` |
+| `workflows/` | `/files/workflows` no n8n (só leitura) | JSON dos workflows para importar |
+| volume `n8n_data`, `postgres_data` | — | Workflows ativos, credenciais e execuções do n8n |
+
+**Esses arquivos precisam existir antes do `up`.** Se faltar um deles, o Docker cria uma **pasta** com o mesmo nome, e o monitor falha com `EISDIR`. Apague a pasta, copie o `.example` e suba de novo.
+
 ## Nunca faça
 
 - **Nunca use o `ML_REFRESH_TOKEN` da produção na sua máquina.** O refresh é de uso único: a primeira renovação local invalida o da VPS, e a produção fica sem o teto do ML.

@@ -1,7 +1,21 @@
 # API do monitor (`monitor-sftp`)
 
-Host local: `http://127.0.0.1:8081` (container escuta `0.0.0.0:8080`).  
+Contrato HTTP do monitor. O código fica em `monitoramento/src/http.ts`; os módulos por trás de cada rota estão em [monitor.md](monitor.md).
+
+Host local: `http://127.0.0.1:8081` (o container escuta `0.0.0.0:8080`).  
 Rede Docker (n8n): `http://monitor-sftp:8080`.
+
+| Rota | Token | Quem chama | Efeito |
+|---|---|---|---|
+| `GET /health` | não | Docker / você | Vivo? Não toca em nada externo |
+| `GET /painel` | sim (`?token=` aceito) | navegador | A página do painel |
+| `GET /status` | sim | painel | Última checagem, em memória |
+| `GET /historico?dia=` | sim | painel | Histórico e saúde do dia |
+| `POST /ciclo` | sim | n8n | **Pode disparar contingência real** |
+| `POST /ciclo/conferir` | sim | n8n | Só leitura (SFTP + ML) |
+| `GET /ml/teto` | sim | você (depuração) | Só leitura (ZIP do ML) |
+
+Toda resposta JSON tem `ok: true|false`. Em erro, ela traz `erro: "<mensagem>"`. Uma rota inexistente responde 404, com a lista de rotas.
 
 Autenticação: `MONITOR_HTTP_TOKEN` no `.env` (preferido) ou `http.token` em `config.yml`. Envie `Authorization: Bearer {token}` ou `X-Token`. `?token=` só é aceito em `/painel` (para abrir no navegador; a página responde com `Referrer-Policy: no-referrer` e chama `/status` e `/historico` com o header). **Sem token configurado, todas as rotas exceto `/health` respondem 401** — o `POST /ciclo` dispara contingência real.
 
@@ -13,7 +27,7 @@ Timeouts no n8n para `/ciclo` (600 s) e `/ciclo/conferir` devem ser altos (ZIP d
 
 O ciclo inteiro roda no monitor; o n8n só espera e envia `mensagens[]` (`{assunto, mensagem}`). Ver [ADR-004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md).
 
-`POST /ciclo` · corpo `{ "execucao": "<id da execução n8n>" }`. Checa SFTP + teto ML; para cada NF ausente localiza o `invoice_id`, diagnostica no Nerus e (se o ML não avisou e `CONTINGENCIA` ≠ `off`) renotifica. Resposta:
+`POST /ciclo` · corpo `{ "execucao": "<id da execução n8n>" }`. Checa SFTP + teto ML; para cada NF ausente localiza o `invoice_id`, diagnostica no Nerus e renotifica se o ML não avisou e `CONTINGENCIA=on` (só o `docker-compose.prod.yml` liga). Resposta:
 
 | Campo | Significado |
 |---|---|
@@ -35,7 +49,7 @@ Sem retry no n8n: repetir `/ciclo` repetiria a contingência. O monitor segura a
 
 ## `GET /painel` · `GET /status`
 
-`/painel?token=...` é a página; ela lê `/status` a cada 1 min. `/status` devolve o estado da última checagem em memória: `status` (`ok` · `alerta` · `erro` · `aguardando`), `checadoEm`, `erro`, `avisos[]`, `resultado` (tabela abaixo) e `ausentesDesde` (`"numero/serie"` → ISO da primeira checagem em que o furo apareceu). O estado zera quando o container reinicia. Se já houver uma checagem em andamento, a próxima espera ela terminar.
+`/painel?token=...` é a página; ela lê `/status` a cada 1 min. `/status` devolve o estado da última checagem em memória: `ocupado`, `intervaloMin`, `cliente`, `status` (`ok` · `alerta` · `erro` · `aguardando`), `checadoEm`, `erro`, `avisos[]`, `resultado` (tabela abaixo) e `ausentesDesde` (`"numero/serie"` → ISO da primeira checagem em que o furo apareceu). O estado zera quando o container reinicia. Se já houver uma checagem em andamento, a próxima espera ela terminar.
 
 Campos de `resultado`:
 
@@ -67,7 +81,9 @@ Query: `start`, `end` (`AAAAMMDD`), `series=2,8`.
 Sem `start`/`end`, usa `ML_TETO_DIAS` (padrão **1** = só hoje).
 
 ```bash
-curl http://127.0.0.1:8081/ml/teto
+curl -H "Authorization: Bearer $MONITOR_HTTP_TOKEN" "http://127.0.0.1:8081/ml/teto?series=2"
 ```
+
+Chamadas a esta rota contam no limite de taxa do ML. O cache (`ML_TETO_CACHE_MIN`) é compartilhado com a checagem.
 
 Não existe `GET /invoices/search` utilizável nesta app (403 PolicyAgent). Ver [ADR-001](decisions/0001-relatorio-zip-em-vez-de-search.md).
