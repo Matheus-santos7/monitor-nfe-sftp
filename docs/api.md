@@ -2,8 +2,7 @@
 
 Contrato HTTP do monitor. O código fica em `monitoramento/src/http.ts`; os módulos por trás de cada rota estão em [monitor.md](monitor.md).
 
-Host local: `http://127.0.0.1:8081` (o container escuta `0.0.0.0:8080`).  
-Rede Docker (n8n): `http://monitor-sftp:8080`.
+Host local: `http://127.0.0.1:8081` (o container escuta `0.0.0.0:8080`). Em produção, acesse por túnel SSH.
 
 | Rota | Token | Quem chama | Efeito |
 |---|---|---|---|
@@ -11,45 +10,21 @@ Rede Docker (n8n): `http://monitor-sftp:8080`.
 | `GET /painel` | sim (`?token=` aceito) | navegador | A página do painel |
 | `GET /status` | sim | painel | Última checagem, em memória |
 | `GET /historico?dia=` | sim | painel | Histórico e saúde do dia |
-| `POST /ciclo` | sim | n8n | **Pode disparar contingência real** |
-| `POST /ciclo/agora` | sim | botão do painel | Ciclo completo em segundo plano (com `MODO_AGENDA` sombra/ativo) |
-| `POST /ciclo/conferir` | sim | n8n | Só leitura (SFTP + ML) |
+| `POST /ciclo/agora` | sim | botão do painel | Ciclo completo em segundo plano. **Em `ativo`, pode disparar contingência real** |
 | `GET /ml/teto` | sim | você (depuração) | Só leitura (ZIP do ML) |
 
 Toda resposta JSON tem `ok: true|false`. Em erro, ela traz `erro: "<mensagem>"`. Uma rota inexistente responde 404, com a lista de rotas.
 
-Autenticação: `MONITOR_HTTP_TOKEN` no `.env` (preferido) ou `http.token` em `config.yml`. Envie `Authorization: Bearer {token}` ou `X-Token`. `?token=` só é aceito em `/painel` (para abrir no navegador; a página responde com `Referrer-Policy: no-referrer` e chama `/status` e `/historico` com o header). **Sem token configurado, todas as rotas exceto `/health` respondem 401** — o `POST /ciclo` dispara contingência real.
-
-Erros de entrada: JSON inválido ou corpo que não é objeto → 400; corpo acima de 1 MB → 413. `notas[]` precisa de 1–500 itens com `numero` e `serie` inteiros positivos; itens de `lote[]` sem `numero`/`serie` válidos → 400.
-
-Timeouts no n8n para `/ciclo` (600 s) e `/ciclo/conferir` devem ser altos (ZIP do ML + SFTP + SSH).
-
-## `POST /ciclo` · `POST /ciclo/conferir`
-
-O ciclo inteiro roda no monitor; o n8n só espera e envia `mensagens[]` (`{assunto, mensagem}`). Ver [ADR-004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md).
-
-`POST /ciclo` · corpo `{ "execucao": "<id da execução n8n>" }`. Checa SFTP + teto ML; para cada NF ausente localiza o `invoice_id`, diagnostica no Nerus e renotifica se o ML não avisou e `CONTINGENCIA=on` (só o `docker-compose.prod.yml` liga). Resposta:
-
-| Campo | Significado |
-|---|---|
-| `status` | `ok` · `degradado` (sem furo visível, mas checagem cega — ex.: sem teto ML) · `alerta` (furo ou série sem XML) |
-| `lote[]` | Diagnóstico de cada NF ausente. Vazio = nada a conferir |
-| `espera` | `10min` (entrega pendente) · `2min` (contingência) · `nenhuma` |
-| `notasAusentes[]` · `avisos[]` | Da checagem |
-| `mensagens[]` | Para enviar já (resumo ok/degradado ou série sem XML). Vazio quando há `lote` |
-
-Sem retry no n8n: repetir `/ciclo` repetiria a contingência. O monitor segura a mesma invoice por 30 min (trava em memória), mas não conte com isso para retry. Um único túnel SSH + MySQL atende todas as NFs do ciclo. Timeout do nó: 600 s.
-
-`POST /ciclo/conferir` · corpo `{ "execucao", "notas": [...notasAusentes], "lote": [...lote] }` (os dois vêm da resposta do `/ciclo`). Rechecha o FTP e devolve `aindaFaltam`, `faltando[]`, `noFtp`, `total` e `mensagens[]` (um relatório por NF + resumo do lote). Só leitura — pode ter retry.
+Autenticação: `MONITOR_HTTP_TOKEN` no `.env` (preferido) ou `http.token` em `config.yml`. Envie `Authorization: Bearer {token}` ou `X-Token`. `?token=` só é aceito em `/painel` (para abrir no navegador; a página responde com `Referrer-Policy: no-referrer` e chama `/status` e `/historico` com o header). **Sem token configurado, todas as rotas exceto `/health` respondem 401** — o `POST /ciclo/agora` pode disparar contingência real.
 
 ## `POST /ciclo/agora`
 
-Roda o ciclo completo **dentro do monitor**: ciclo, espera do lote, conferência e envio dos avisos. É o que o botão "Executar agora" do painel chama. Responde na hora, sem esperar o fim:
+Roda o ciclo completo, igual ao agendado: checagem, diagnóstico de cada furo (com contingência em `ativo`), espera do lote, conferência e envio dos avisos. É o que o botão "Executar agora" do painel chama. O ciclo está descrito em [regra-de-negocio.md](regra-de-negocio.md). Responde na hora, sem esperar o fim:
 
 | Código | Quando |
 |---|---|
 | `202` | Iniciou. O andamento aparece em `GET /status` → `ciclo` |
-| `409` | `MODO_AGENDA=off` (o n8n ainda é quem agenda) ou já há um ciclo em andamento |
+| `409` | `MODO_AGENDA=off` (monitor pausado) ou já há um ciclo em andamento |
 
 Com `MODO_AGENDA=sombra`, roda sem contingência e não envia avisos.
 

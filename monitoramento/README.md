@@ -1,6 +1,6 @@
 # monitor-sftp
 
-O serviço Node 22 + TypeScript que contém toda a regra do monitor NF-e. O n8n o chama via HTTP.
+O serviço Node 22 + TypeScript do monitor NF-e: agenda, regra, avisos e painel, tudo aqui.
 
 - **Onde fica cada coisa e como testar:** [docs/monitor.md](../docs/monitor.md)
 - **Contrato HTTP:** [docs/api.md](../docs/api.md)

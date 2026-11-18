@@ -8,10 +8,9 @@ Detectar NF-e autorizada no Mercado Livre que ainda não chegou ao SFTP do clien
 
 ## Stack
 
-- **n8n** — hoje ainda agenda, espera e notifica; em saída (ADR-005), o monitor assume com `MODO_AGENDA`. Postgres é só do n8n.
 - **monitor-sftp** — Node 22 + TypeScript, `http` nativo, sem framework. Lê SFTP (`ssh2-sftp-client`), relatório ZIP de NF-e do ML (OAuth com refresh de uso único), MySQL do gateway via túnel SSH (`ssh2` + `mysql2`).
 - **Painel** — HTML único servido pelo monitor (`/painel`), checagem silenciosa a cada `PAINEL_INTERVALO_MIN`, histórico por dia em `data/historico/AAAAMMDD.json`.
-- Docker Compose; produção em VPS com Traefik (monitor não exposto, acesso por túnel).
+- Docker Compose com um serviço só; produção em VPS (monitor não exposto, acesso por túnel). Agenda (`node-cron`) e avisos (Chat, e-mail via SMTP, WhatsApp) no próprio monitor.
 - Testes: `node:test` via `tsx` (`npm test`).
 
 ## Regra de negócio central
@@ -22,7 +21,7 @@ Detectar NF-e autorizada no Mercado Livre que ainda não chegou ao SFTP do clien
 
 ## Fase atual
 
-Em produção para **1 cliente** (um container por cliente). Painel e histórico recém-criados. Regra de lote, espera e textos no monitor (`/ciclo`, ADR-004). Saída do n8n em andamento (ADR-005): o monitor já agenda, espera e avisa com `MODO_AGENDA` (off/sombra/ativo); falta a transição em produção e remover n8n/Postgres/Traefik do compose.
+Em produção para **1 cliente** (um container por cliente). Painel e histórico recém-criados. Regra de lote, espera e textos no monitor (`/ciclo`, ADR-004). O n8n saiu (ADR-005): o monitor agenda, espera e avisa (`MODO_AGENDA`: sombra local, ativo na VPS). Produção ainda roda a versão com n8n até o deploy desta versão.
 
 ## Restrições
 
@@ -35,5 +34,5 @@ Em produção para **1 cliente** (um container por cliente). Painel e histórico
 
 - Furo detectado em ≤ 5 min, com etapa da falha e ação recomendada visíveis no painel e no aviso.
 - Cobertura degradada (ML/SFTP/SSH indisponível) nunca aparece como verde — nem no painel nem no chat.
-- Regra de decisão em código TypeScript testado; n8n só agenda, espera e notifica.
+- Regra de decisão, agenda e avisos em código TypeScript testado.
 - Saúde diária registrada (furos, tempo até o FTP, falhas) e consultável por dia.

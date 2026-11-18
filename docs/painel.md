@@ -1,6 +1,6 @@
 # Camada de visualização: painel e histórico
 
-O painel mostra, em tempo real, se a integração está em dia. Ele **não envia avisos**: quem avisa é o n8n. A página é servida pelo próprio monitor (`painel.ts`), e os dados vêm de `GET /status` e `GET /historico` ([api.md](api.md)).
+O painel mostra, em tempo real, se a integração está em dia. Ele **não envia avisos**: quem avisa é o ciclo agendado. A página é servida pelo próprio monitor (`painel.ts`), e os dados vêm de `GET /status` e `GET /historico` ([api.md](api.md)).
 
 ## Como abrir
 
@@ -19,12 +19,18 @@ O token vai na URL só para abrir a página. Depois o JS usa o token no header. 
 
 ## Como ler cada parte
 
+### Ciclo de monitoramento
+
+Mostra o modo da agenda (desligada, sombra ou ativa), o próximo horário, a etapa em andamento ("confere às 10:42") e o último ciclo: origem, status, quantos avisos e se algum ficou **sem entrega** em nenhum canal.
+
+O botão **Executar agora** roda o ciclo completo na hora. Ele pede confirmação, e em `ativo` pode disparar contingência real. Fica desligado com `MODO_AGENDA=off` ou com um ciclo em andamento.
+
 ### Faixa de status
 
 | Cor / status | Texto | Significa | O que fazer |
 |---|---|---|---|
 | Verde `ok` | "Tudo integrado — última NF do ML está no FTP e não há furos" | Tudo certo **e** a checagem está completa | Nada |
-| Laranja `alerta` | "N nota(s) ausente(s) no FTP" | Há furo | Veja a tabela de ausentes. O n8n diagnostica na próxima hora cheia |
+| Laranja `alerta` | "N nota(s) ausente(s) no FTP" | Há furo | Veja a tabela de ausentes. O ciclo diagnostica na próxima hora cheia, ou use **Executar agora** |
 | Vermelho `erro` | "Checagem falhou: …" | O SFTP ou a checagem quebrou | Veja o log do monitor |
 | Vermelho `erro` | "Checagem incompleta — veja os avisos" | Cobertura degradada (ex.: sem teto do ML) | Leia **Avisos**. Pode haver furo que o monitor não está vendo |
 | Cinza `aguardando` | "Aguardando a primeira checagem…" | O monitor acabou de subir | Espere um ciclo |

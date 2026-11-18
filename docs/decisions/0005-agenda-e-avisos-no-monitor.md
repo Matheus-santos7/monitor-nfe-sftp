@@ -7,7 +7,7 @@ Accepted. Substitui a parte de orquestração do ADR-004. A regra de negócio co
 A transição está em andamento:
 
 - **Já no código:** agenda, espera do lote, avisos, aviso de falha, trava da contingência em disco e o botão "Executar agora".
-- **Ainda não feito:** desligar o n8n em produção e tirar o n8n, o Postgres e o Traefik do compose.
+- **Remoção do n8n:** feita na branch `feat/remover-n8n`. O compose ficou só com o monitor; saíram `workflows/`, as rotas `/ciclo` e `/ciclo/conferir`, `MODO_AGENDA` passou a ser `sombra` local e `ativo` na VPS. O deploy em produção segue `docs/deploy.md`, seção 3.
 
 ## Date
 
@@ -66,4 +66,4 @@ Além disso, o n8n trazia duas peças só para ele, o Postgres e o Traefik, para
 - O histórico de execuções do n8n deixa de existir depois da troca. O painel, com "Ciclo de monitoramento", o histórico do dia e o log substituem esse histórico.
 - Trocar um canal de aviso passa a exigir uma variável no `.env` e a recriação do container, não uma edição no editor.
 - A credencial SMTP sai do n8n e vai para o `.env` (`SMTP_*`).
-- A transição segue `docs/deploy.md` (seção 3b). A remoção do n8n do compose fica para quando o modo `ativo` estiver estável.
+- A primeira subida sem n8n segue `docs/deploy.md`, seção 3. O `--remove-orphans` para os containers antigos, e os volumes do n8n ficam no disco até serem apagados à mão.

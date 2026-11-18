@@ -21,64 +21,66 @@ O monitor é um serviço Node 22 em TypeScript, com `http` nativo e sem framewor
 | `relatorio.ts` | Textos dos avisos: resumo, série sem XML, relatório por NF, resumo do lote. Funções puras |
 | `historico.ts` | Arquivo JSON por dia, resumo de saúde (`resumirDia`) |
 | `painel.ts` | O HTML do painel, numa string. O JS dele lê `/status` e `/historico` |
-| `orquestrador.ts` | **Ciclo completo sem n8n:** ciclo → espera do lote → conferência (→ 2 min → de novo) → avisos; aviso de falha; uma rodada por vez; modo da agenda |
+| `orquestrador.ts` | **Ciclo completo:** ciclo → espera do lote → conferência (→ 2 min → de novo) → avisos; aviso de falha; uma rodada por vez; modo da agenda |
 | `avisos.ts` | Envio para Google Chat, WhatsApp (`fetch`) e e-mail (SMTP, `nodemailer`). Cada canal é independente |
 
 As integrações (SFTP, ML e Nerus) estão detalhadas em [integracoes.md](integracoes.md), e o painel em [painel.md](painel.md).
 
-## Caminho de um `POST /ciclo`
+## Caminho de um ciclo
+
+A agenda (`index.ts`, `node-cron`) ou o botão "Executar agora" (`POST /ciclo/agora`) chamam `dispararCiclo`:
 
 ```
-http.ts  rotear → autorizado → rodarCiclo(depsReais(config))
-ciclo.ts   checar() ─────────► job.ts executarJob (fila)
-                                 sftp.listarArquivosFtp
-                                 ml-invoices.buscarTetosPorSerie
-                                 gaps.analisarSeries → furos, avisos
-                                 registrarChecagem → painel + historico
-           status ok/degradado → relatorio.mensagemResumo → fim
-           status alerta:
-             validarMl()   (token ML inválido = erro HTTP → Error Handler do n8n)
-             comSessaoNerus(para cada NF):
-               localizar (ml-invoices) → diagnosticar (diagnostico.ts)
-                 consultarEstadoNerus (nerus-db) → decidirAcao
-                 → reservarContingencia → renotificarInvoice (nerus-contigencia)
-             relatorio.decidirEsperaLote → {lote, espera}
+orquestrador.ts  executarCicloCompleto
+  1. ciclo.ts rodarCiclo
+       checar() ──────────► job.ts executarJob (fila)
+                              sftp.listarArquivosFtp
+                              ml-invoices.buscarTetosPorSerie
+                              gaps.analisarSeries → furos, avisos
+                              registrarChecagem → painel + historico
+       status ok/degradado → relatorio.mensagemResumo → (vai para o passo 4)
+       status alerta:
+         validarMl()   (token ML inválido → o ciclo falha → aviso de falha)
+         comSessaoNerus(para cada NF):
+           localizar (ml-invoices) → diagnosticar (diagnostico.ts)
+             consultarEstadoNerus (nerus-db) → decidirAcao
+             → reservarContingencia → renotificarInvoice (nerus-contigencia)
+         relatorio.decidirEsperaLote → {lote, espera}
+  2. espera do lote: 10 min (entrega pendente) ou 2 min (contingência)
+  3. ciclo.ts conferirLote → se ainda falta: espera 2 min → conferirLote de novo
+  4. avisos.ts enviarAviso para cada mensagem (em sombra: só log)
+  qualquer erro → "🚨 O ciclo de monitoramento falhou" (etapa + erro)
 ```
 
-O `POST /ciclo/conferir` só chama `checar()` de novo e monta os relatórios com `relatorioNota` e `relatorioConferencia`.
-
-## Agenda e avisos (migração para fora do n8n)
-
-Com `MODO_AGENDA`, o monitor pode fazer sozinho o que o workflow do n8n faz:
+## Agenda e avisos
 
 | `MODO_AGENDA` | O que acontece |
 |---|---|
-| `off` (padrão) | Nada é agendado. O n8n chama `/ciclo` e avisa. O botão "Executar agora" do painel fica desligado |
-| `sombra` | No horário de `AGENDA_CICLO`, roda o ciclo completo **sem contingência** e **sem enviar avisos** (só log e painel). Serve para comparar com o n8n |
-| `ativo` | O monitor agenda, espera, confere e avisa. O workflow do n8n precisa estar **desativado** |
+| `off` | Monitor pausado: nada é agendado e o "Executar agora" fica desligado. O painel continua checando |
+| `sombra` (padrão local) | No horário de `AGENDA_CICLO`, roda o ciclo completo **sem contingência** e **sem enviar avisos** (só log e painel) |
+| `ativo` (padrão na VPS, via `docker-compose.prod.yml`) | Agenda, espera, confere e avisa de verdade |
 
 - **Agenda:** `node-cron` com `AGENDA_CICLO` (padrão `0 8-18 * * 1-5`, fuso America/Sao_Paulo). Se o horário chega com uma rodada ainda em andamento (por exemplo, na espera de 10 min), a nova é pulada, com log.
-- **Avisos:** `avisos.ts`, com o mesmo corpo que o n8n mandava. Um canal sem variável é pulado. Se nenhum canal entregar um aviso, isso vira um evento no histórico e aparece no painel.
-- **Falha no ciclo** (SFTP fora, token do ML, erro na conferência): vira o aviso "🚨 O ciclo de monitoramento falhou", com a etapa e o erro. É o antigo Error Handler do n8n.
+- **Avisos:** `avisos.ts`. O Chat recebe `{text}`, o WhatsApp `{number, text}`, e o e-mail vai com assunto e texto puro. Um canal sem variável é pulado. Se nenhum canal entregar um aviso, isso vira um evento no histórico e aparece no painel.
+- **Falha no ciclo** (SFTP fora, token do ML, erro na conferência): vira o aviso "🚨 O ciclo de monitoramento falhou", com a etapa e o erro.
 - **Restart durante a espera:** o lote em memória se perde. O próximo horário redescobre os furos, e a trava da contingência (em disco) impede que ela saia em dobro.
 
 ## Estado e concorrência
 
-- **Fila de checagem** (`job.ts`, `executarJob`): uma checagem por vez. Se o painel e o n8n pedirem juntos, o segundo espera. Isso evita duas renovações do token do ML ao mesmo tempo.
+- **Fila de checagem** (`job.ts`, `executarJob`): uma checagem por vez. Se o painel e o ciclo pedirem juntos, o segundo espera. Isso evita duas renovações do token do ML ao mesmo tempo.
 - **O que fica em memória e some num restart:** o estado do painel (`/status`), a idade dos furos (retomada do histórico do dia na subida), o cache do ZIP e o andamento do ciclo do orquestrador.
 - **O que fica em disco**, em `monitoramento/data/`, montado em `/app/data`: o histórico (`historico/AAAAMMDD.json`), os tokens do ML (`ml-tokens.json`) e a trava da contingência (`contingencias.json`, `CONTINGENCIAS_PATH`).
-- **O lote não fica em lugar nenhum:** ele vai e volta no corpo, entre o n8n e o monitor.
+- **O lote só existe durante a rodada**, na memória do orquestrador.
 
 ## Tratamento de erro: o que vira o quê
 
 | Falha | Resultado |
 |---|---|
-| SFTP fora | Checagem falha: `/ciclo` responde 500, o n8n chama o Error Handler e o painel mostra "Checagem falhou" |
+| SFTP fora | A checagem falha: aviso de falha nos canais, e o painel mostra "Checagem falhou" |
 | ML sem teto (429, credencial) | Aviso → `degradado` / "cobertura parcial" |
 | ML falha ao localizar uma NF | Item "Não foi possível consultar o Mercado Livre", e o ciclo segue |
 | Nerus fora ou query com erro | Item com o erro, **sem** contingência, e o ciclo segue |
-| Token do ML inválido ao diagnosticar | `/ciclo` responde 500 → Error Handler |
-| Corpo inválido / grande demais | 400 / 413 |
+| Token do ML inválido ao diagnosticar | O ciclo falha → aviso de falha |
 | Erro inesperado numa rota | 500 "erro interno". O processo **não** cai |
 | Histórico corrompido ou sem gravar | O arquivo é movido para `.corrompido-<ms>` / aviso no painel. A checagem segue |
 

@@ -1,4 +1,4 @@
-# Deploy, troca de workflow e recuperação
+# Deploy, operação e recuperação
 
 Não existe staging. Cada passo abaixo age no cliente real. Siga a ordem e não pule a verificação no final de cada etapa.
 
@@ -9,7 +9,6 @@ Você precisa de:
 | Acesso | Para quê |
 |---|---|
 | SSH na VPS | rebuild do monitor e leitura dos logs |
-| Editor do n8n de produção | importar, ativar e desativar workflows |
 | `.env` e `monitoramento/config.yml` da VPS | ficam só no servidor, nunca no Git |
 | App do Mercado Livre (client id e secret) | só para recuperar o token (ver o fim desta página) |
 
@@ -17,119 +16,91 @@ Se faltar algum desses acessos, pare e peça ao responsável pelo projeto. Não 
 
 ## Como a infraestrutura está montada
 
-Tudo roda em Docker Compose, num container por serviço. Cada cliente tem a sua instalação (pasta, `.env`, `config.yml`).
+É um serviço só, o `monitor-sftp`, em Docker Compose. Cada cliente tem a sua instalação (pasta, `.env`, `config.yml`).
 
 | Arquivo | Quando entra | O que define |
 |---|---|---|
-| `docker-compose.yml` | sempre, local e na VPS | `postgres` (banco **só do n8n**), `n8n`, `monitor-sftp`. As portas ficam só em `127.0.0.1` (n8n 5678, monitor 8081). `CONTINGENCIA` padrão `off` |
-| `docker-compose.prod.yml` | só na VPS, junto com o base | `traefik` com HTTPS (Let's Encrypt) na frente do n8n, mais `CONTINGENCIA=on` no monitor |
+| `docker-compose.yml` | sempre, local e na VPS | O `monitor-sftp`, com a porta só em `127.0.0.1:8081`. Padrões seguros: `MODO_AGENDA=sombra` e `CONTINGENCIA=off` |
+| `docker-compose.prod.yml` | só na VPS, junto com o base | `MODO_AGENDA=ativo` (agenda e avisos de verdade) e `CONTINGENCIA=on` |
 
-Na VPS, ponha `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml` no `.env`. Com isso, todo `docker compose …` usa os dois arquivos. Sem o overlay, a contingência fica desligada e o n8n fica sem HTTPS, **sem dar erro nenhum**.
+Na VPS, ponha `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml` no `.env`. Com isso, todo `docker compose …` usa os dois arquivos. Sem o overlay, o monitor roda em sombra, sem avisar ninguém, e **sem dar erro nenhum**.
 
 O que fica no disco do host, fora do Git:
 
 | Caminho no host | No container | Conteúdo |
 |---|---|---|
-| `.env` | variáveis + `/app/.env.host` no monitor | Segredos. O monitor também grava ali o token do ML renovado |
+| `.env` | variáveis + `/app/.env.host` | Segredos. O monitor também grava ali o token do ML renovado |
 | `monitoramento/config.yml` | `/app/config.yml` (só leitura) | Cliente, SFTP, séries |
-| `monitoramento/data/` | `/app/data` | `historico/AAAAMMDD.json` e `ml-tokens.json` (token do ML, com prioridade sobre o `.env`) |
+| `monitoramento/data/` | `/app/data` | `historico/AAAAMMDD.json`, `ml-tokens.json` (token do ML, com prioridade sobre o `.env`) e `contingencias.json` (trava) |
 | `secrets/bastion.pem` (ou `NERUS_SSH_KEY_HOST_PATH`) | `/run/secrets/bastion.pem` | Chave SSH do bastion do Nerus, `chmod 600` |
-| `workflows/` | `/files/workflows` no n8n (só leitura) | JSON dos workflows para importar |
-| volume `n8n_data`, `postgres_data` | — | Workflows ativos, credenciais e execuções do n8n |
 
 **Esses arquivos precisam existir antes do `up`.** Se faltar um deles, o Docker cria uma **pasta** com o mesmo nome, e o monitor falha com `EISDIR`. Apague a pasta, copie o `.example` e suba de novo.
 
 ## Nunca faça
 
 - **Nunca use o `ML_REFRESH_TOKEN` da produção na sua máquina.** O refresh é de uso único: a primeira renovação local invalida o da VPS, e a produção fica sem o teto do ML.
-- **Nunca deixe dois workflows de monitoramento ativos para o mesmo cliente.** A contingência rodaria em dobro.
-- **Nunca suba o monitor novo enquanto o workflow antigo estiver ativo.** O workflow antigo chama rotas que já não existem (`/executar`, `/diagnostico`).
-- **Nunca coloque `CONTINGENCIA=on` fora da VPS.** O padrão é `off`, e só o `docker-compose.prod.yml` liga.
-- **Nunca rode `/ciclo` em produção para "testar".** Use o teste de fumaça abaixo, com `CONTINGENCIA=off`.
+- **Nunca rode dois monitores agendando para o mesmo cliente**, por exemplo dois servidores ou duas pastas. A contingência e os avisos sairiam em dobro. A trava de 30 min por invoice é só uma rede de proteção.
+- **Nunca coloque `MODO_AGENDA=ativo` ou `CONTINGENCIA=on` fora da VPS.** Os padrões locais são `sombra` e `off`, e só o `docker-compose.prod.yml` liga os dois.
+- **Nunca use o "Executar agora" em produção para "testar".** Ele roda o ciclo de verdade. Para testar, use a sua máquina (etapa 1).
 
 ## 1. Validar a mudança na sua máquina
 
 ```bash
 cd monitoramento && npm run check     # typecheck + testes (o CI roda o mesmo)
 cd .. && docker compose up -d --build monitor-sftp
-docker compose logs --tail 20 monitor-sftp   # deve aparecer "Contingência desligada"
+docker compose logs --tail 20 monitor-sftp   # "Contingência desligada" e "Agenda do ciclo em SOMBRA"
 ```
 
-Abra `http://localhost:8081/painel?token=<MONITOR_HTTP_TOKEN do seu .env>`.
+Abra `http://localhost:8081/painel?token=<MONITOR_HTTP_TOKEN do seu .env>`. O **Executar agora** roda o ciclo inteiro em sombra: diagnostica, espera, confere e mostra os avisos no log, sem enviar.
 
-Para ver um furo sem esperar um de verdade, faça assim:
+Para ver um furo sem esperar um de verdade:
 
-1. No `.env`, coloque `FAKE_NOTA=99999/2`, usando uma série do seu `config.yml` e um número que não exista.
-2. Rode `docker compose up -d --force-recreate monitor-sftp`.
-3. Confira que o painel mostra a NF 99999/2 ausente.
-4. Volte `FAKE_NOTA=` para vazio e recrie o container de novo.
-
-## 2. Deploy do monitor na VPS
-
-Na VPS, o `docker-compose.prod.yml` (Traefik e `CONTINGENCIA=on`) precisa entrar em **todo** comando. Coloque uma vez no `.env` do servidor:
-
-```
-COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+```bash
+FAKE_NOTA=99999/2 docker compose up -d --force-recreate monitor-sftp   # série do seu config.yml, número que não existe
+# painel: a NF 99999/2 aparece ausente; Executar agora → log "▶ [sombra] aviso não enviado: …"
+docker compose up -d --force-recreate monitor-sftp                     # volta ao normal
 ```
 
-Com isso, `docker compose ...` já inclui os dois arquivos. Os comandos abaixo mantêm o `-f` explícito para funcionar mesmo sem essa linha.
+## 2. Deploy na VPS
 
 ```bash
 ssh <vps>
 cd <pasta do projeto>
 git fetch && git checkout <commit ou tag aprovado>
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build monitor-sftp
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans
 docker compose logs --tail 20 monitor-sftp
 ```
 
 Verifique:
 
-- O log mostra `monitor-sftp pronto` e `Contingência LIGADA`. Se aparecer "desligada", o `.env` da VPS tem `CONTINGENCIA` com outro valor: corrija o arquivo antes de seguir.
+- O log mostra `monitor-sftp pronto`, `Contingência LIGADA` e `Agenda do ciclo ATIVA`. Se não mostrar "nenhum canal de aviso configurado", os canais estão definidos. Se aparecer "desligada" ou "SOMBRA", o overlay não entrou, ou o `.env` da VPS define `CONTINGENCIA` ou `MODO_AGENDA`: corrija antes de seguir.
 - `curl -s http://127.0.0.1:8081/health` responde `{"ok":true,...}`.
 - `curl -s -H "Authorization: Bearer $MONITOR_HTTP_TOKEN" http://127.0.0.1:8081/status` responde 200. Um 401 com a mensagem "defina MONITOR_HTTP_TOKEN" quer dizer que falta o token no `.env`.
-- Painel: abra um túnel com `ssh -L 8081:127.0.0.1:8081 <vps>` e acesse `http://localhost:8081/painel?token=...` no seu navegador.
+- Painel: abra um túnel com `ssh -L 8081:127.0.0.1:8081 <vps>` e acesse `http://localhost:8081/painel?token=...` no seu navegador. A seção "Ciclo de monitoramento" deve mostrar "ativa" e o próximo horário.
+- Na próxima hora cheia, o painel mostra o "Último ciclo", e os avisos chegam nos canais.
 
-Mudou só o `config.yml`, por exemplo uma série nova? Rode `docker compose restart monitor-sftp`, sem rebuild. Mudou o `.env`? Rode `up -d --force-recreate monitor-sftp n8n`.
+Mudou só o `config.yml`, por exemplo uma série nova? Rode `docker compose restart monitor-sftp`, sem rebuild. Mudou o `.env`? Rode `up -d --force-recreate monitor-sftp`.
 
-## 3. Trocar o workflow no n8n (primeira vez ou JSON alterado)
+**Pausar o monitor** (manutenção do gateway, por exemplo): coloque `MODO_AGENDA=off` no `.env` e recrie. Para manter os avisos e só desligar a contingência, use `CONTINGENCIA=off`.
 
-A ordem importa.
+## 3. Primeira vez sem n8n (servidor que ainda roda o n8n)
 
-1. Importe o JSON. Ele entra **inativo**:
-   ```bash
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps n8n import:workflow --input=/files/workflows/monitor-sftp.json
-   ```
-2. No editor do n8n, **desative** o workflow antigo de monitoramento. Confira na lista que ele aparece como inativo.
-3. Faça o deploy do monitor (etapa 2), se ainda não fez.
-4. No workflow **1. Monitor SFTP NF-e (ciclo)**:
-   - Em Settings → Error workflow, escolha **0. Error Handler — Monitor NF-e**.
-   - Para o primeiro teste, coloque `CONTINGENCIA=off` no `.env` da VPS e recrie o monitor.
-   - Clique em **Executar agora** e confira as mensagens no Chat e no e-mail.
-5. Volte `CONTINGENCIA` para `on` (ou remova a linha), recrie o monitor e **ative** o workflow.
-6. Na próxima hora cheia, confira no n8n que a execução agendada terminou verde e que o painel atualizou.
+Siga isto uma vez, no servidor que ainda tem os containers `n8n`, `n8n-postgres` e `n8n-traefik`.
 
-## 3b. Sair do n8n: o monitor passa a agendar e avisar
+1. **Antes do deploy:**
+   - Copie a credencial SMTP do n8n (Credentials) para `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` e `SMTP_PASS` no `.env`. Confira também `GOOGLE_CHAT_WEBHOOK_URL`, `WHATSAPP_*` e `ALERT_EMAIL_*`, que já estavam no `.env`.
+   - Tire do `.env` qualquer `MODO_AGENDA` e `CONTINGENCIA` que impeçam os padrões de produção.
+   - Se quiser guardar o histórico de execuções do n8n, exporte agora pelo editor.
+2. Faça o deploy da etapa 2. O `--remove-orphans` **para e remove os containers** do n8n, do Postgres e do Traefik, que não estão mais no compose. Isso evita dois agendadores. Depois, confira com `docker ps` que só sobrou o `n8n-monitor-sftp`.
+3. Rode **Executar agora** no painel e confira se os avisos chegam nos três canais.
+4. Os volumes `n8n_n8n_data`, `n8n_postgres_data` e `n8n_traefik_data` continuam no disco. Depois de uma semana estável, apague-os se quiser: `docker volume rm …`.
 
-O monitor já faz sozinho o que o workflow faz ([ADR-005](decisions/0005-agenda-e-avisos-no-monitor.md)). A troca acontece em três passos, sem buraco no monitoramento.
-
-1. **Sombra (2–3 dias úteis):** coloque `MODO_AGENDA=sombra` no `.env` da VPS e recrie o monitor. O log mostra `Agenda do ciclo em SOMBRA`.
-   - O n8n continua ativo e é quem avisa.
-   - O monitor roda nos mesmos horários **sem contingência e sem avisos**. Compare, no painel ("Ciclo de monitoramento") e no log (`▶ Ciclo agenda-…`), os furos e o resultado com as execuções do n8n.
-2. **E-mail:** copie a credencial SMTP do n8n (Credentials) para `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` e `SMTP_PASS` no `.env`. Confira também `GOOGLE_CHAT_WEBHOOK_URL`, `WHATSAPP_*` e `ALERT_EMAIL_*`.
-3. **Troca:** no editor do n8n, **desative** o workflow **1. Monitor SFTP NF-e (ciclo)**. No mesmo momento, troque para `MODO_AGENDA=ativo` e recrie o monitor.
-   - O log deve mostrar `Agenda do ciclo ATIVA`, sem o aviso "nenhum canal de aviso configurado".
-   - Use o botão **Executar agora** do painel e confira se os avisos chegaram nos três canais.
-4. **Observe um dia.** Se der errado: volte `MODO_AGENDA=off`, recrie o monitor e reative o workflow no n8n.
-
-Só depois disso estável o n8n, o Postgres e o Traefik podem sair do compose.
+O nome do projeto continua `n8n` de propósito: assim o container do monitor e a pasta `data/` continuam os mesmos.
 
 ## 4. Rollback
 
-O monitor e o workflow voltam juntos. Um não funciona com a versão antiga do outro.
-
-1. No n8n, desative o workflow **1. Monitor SFTP NF-e (ciclo)**.
-2. Na VPS, rode `git checkout <commit anterior>` e repita o comando de deploy da etapa 2.
-3. Se voltar para antes desta branch (`b8fe41c` ou anterior), reative o workflow antigo. Ele ainda existe no n8n; se não existir, importe-o a partir desse commit.
+1. `git checkout <commit anterior>` e repita o deploy da etapa 2.
+2. Se voltar para antes da saída do n8n (commits anteriores a esta branch), o compose antigo sobe de novo o n8n, o Postgres e o Traefik, com os volumes que ficaram no disco. Reative o workflow no editor, se ele não voltar ativo, e confira que o monitor antigo não está agendando: no compose antigo, `MODO_AGENDA` é `off`.
 
 ## 5. O token do Mercado Livre morreu
 

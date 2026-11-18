@@ -4,7 +4,7 @@ O monitor conversa com três sistemas de fora. Todos são de produção: não ex
 
 | Sistema | Para quê | Módulos | Se cair |
 |---|---|---|---|
-| SFTP do cliente | Saber quais XMLs chegaram | `sftp.ts`, `chave.ts`, `gaps.ts` | A checagem falha → Error Handler do n8n / painel "Checagem falhou" |
+| SFTP do cliente | Saber quais XMLs chegaram | `sftp.ts`, `chave.ts`, `gaps.ts` | A checagem falha → aviso de falha nos canais e painel "Checagem falhou" |
 | Mercado Livre | Teto da sequência e `invoice_id` de cada NF | `ml-auth.ts`, `ml-invoices.ts` | "Cobertura parcial" (sem teto) ou "Não foi possível consultar o Mercado Livre" (na NF) |
 | Nerus (gateway fiscal) | Em que etapa a nota parou; contingência | `nerus-db.ts`, `diagnostico.ts`, `nerus-contigencia.ts` | A NF sai "Não foi possível consultar o Nerus", sem contingência |
 
@@ -48,7 +48,7 @@ O monitor conversa com três sistemas de fora. Todos são de produção: não ex
 
 - **Caminho:** SSH até o bastion (`NERUS_SSH_HOST`, `NERUS_SSH_USER`, chave em `/run/secrets/bastion.pem`) e, de lá, um túnel até o MySQL (`NERUS_DB_HOST`, `NERUS_DB_PORT`), com o usuário `NERUS_DB_USER`.
 - **A chave SSH:** fica em `secrets/bastion.pem` no host, fora do Git, com `chmod 600`. Se o arquivo estiver vazio, o erro é `Cannot parse privateKey`.
-- **Uma sessão por ciclo:** um único túnel e uma única conexão servem todas as NFs do `/ciclo` (`comSessaoNerus`). Se a abertura falhar, todas as NFs do ciclo recebem o mesmo erro na hora, sem esperar o timeout de cada uma.
+- **Uma sessão por ciclo:** um único túnel e uma única conexão servem todas as NFs do ciclo (`comSessaoNerus`). Se a abertura falhar, todas as NFs do ciclo recebem o mesmo erro na hora, sem esperar o timeout de cada uma.
 - **Timeouts:** 20 s para conectar o SSH e o MySQL, 30 s por query.
 - **Só leitura:** as queries são parametrizadas e não escrevem nada.
 

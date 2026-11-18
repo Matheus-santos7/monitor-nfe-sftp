@@ -16,7 +16,7 @@ Esta página explica o que o monitor considera um problema e o que ele faz em ca
 
 ## 1. Checagem
 
-O n8n chama `POST /ciclo` (seg–sex, de hora em hora, das 8h às 18h). O painel também roda a mesma checagem a cada 5 min, mas sem diagnóstico e sem aviso.
+A agenda do monitor roda o ciclo seg–sex, de hora em hora, das 8h às 18h (`AGENDA_CICLO`). O painel também roda a mesma checagem a cada 5 min, mas sem diagnóstico e sem aviso.
 
 1. **Lista os XMLs** nos diretórios do SFTP (`sftp.ts`). Um diretório que falha é pulado, com aviso no log.
 2. **Conta os números por série** a partir do nome do arquivo (`gaps.ts`, `chave.ts`):
@@ -29,7 +29,7 @@ O n8n chama `POST /ciclo` (seg–sex, de hora em hora, das 8h às 18h). O painel
 
 ## 2. Resultado do ciclo
 
-| `status` | Quando | O que o n8n envia |
+| `status` | Quando | O que é enviado |
 |---|---|---|
 | `ok` | Sem furo, com todas as séries com XML e sem avisos | Resumo "100% OK" |
 | `degradado` | Sem furo visível, mas com algum aviso (ex.: sem teto do ML) | "Monitoramento com cobertura parcial" e o motivo |
@@ -73,11 +73,11 @@ Com `CONTINGENCIA` diferente de `on`, o diagnóstico roda inteiro, mas o relató
 ## 5. Espera e conferência do lote
 
 1. **Uma espera para o lote inteiro:** 10 min se alguma NF aguarda envio, senão 2 min se houve contingência. A de 10 min vence.
-2. O n8n chama `POST /ciclo/conferir` com o lote. O monitor reconfere o FTP de **todas** as NFs.
-3. Se ainda faltar alguma, o n8n espera mais 2 min e confere de novo.
+2. O monitor reconfere o FTP de **todas** as NFs do lote (`conferirLote`).
+3. Se ainda faltar alguma, espera mais 2 min e confere de novo.
 4. Na última conferência sai **um relatório por NF** e **um resumo do lote** ("3/5 no FTP").
 
-O monitor não guarda o lote: ele vai e volta no corpo da chamada ([ADR-004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md)).
+O lote só existe durante a rodada. Se o monitor reiniciar na espera, o próximo horário redescobre os furos ([ADR-005](decisions/0005-agenda-e-avisos-no-monitor.md)).
 
 ## 6. Formato do relatório de uma NF
 
@@ -88,7 +88,7 @@ A ordem é sempre esta (`relatorio.ts`, `relatorioNota`):
 3. **O que aconteceu:** a causa, em linguagem comum, sem nome de tabela.
 4. **O que o monitor fez:** contingência, aviso já reenviado (trava), espera ou reconsulta.
 5. **Onde a integração parou:** só se não resolveu, e só até o primeiro erro.
-6. **Rastro técnico:** cada consulta com tabela, filtro, linhas, ids e status, mais a execução do n8n.
+6. **Rastro técnico:** cada consulta com tabela, filtro, linhas, ids e status, mais o identificador da execução (`agenda-…` ou `manual-…`).
 
 ## 7. `FAKE_NOTA`
 
