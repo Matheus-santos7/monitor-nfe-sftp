@@ -124,6 +124,8 @@ services:
       TZ: ${TZ}
       MONITOR_HTTP_TOKEN: ${MONITOR_HTTP_TOKEN:-}
       FAKE_NOTA: ${FAKE_NOTA:-}
+      PAINEL_INTERVALO_MIN: ${PAINEL_INTERVALO_MIN:-5}
+      CONTINGENCIA: ${CONTINGENCIA:-on}
       ML_ACCESS_TOKEN: ${ML_ACCESS_TOKEN:-}
       ML_REFRESH_TOKEN: ${ML_REFRESH_TOKEN:-}
       ML_CLIENT_ID: ${ML_CLIENT_ID:-}
@@ -131,6 +133,7 @@ services:
       ML_USER_ID: ${ML_USER_ID:-}
       ML_APPLICATION_ID: ${ML_CLIENT_ID:-}
       ML_TETO_DIAS: ${ML_TETO_DIAS:-1}
+      ML_TETO_CACHE_MIN: ${ML_TETO_CACHE_MIN:-5}
       ML_TOKENS_PATH: /app/data/ml-tokens.json
       ML_ENV_PATH: /app/.env.host
       NERUS_TENANT_ID: ${NERUS_TENANT_ID:-}

@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { carregarConfig } from "./config.js";
-import { iniciarHttp } from "./http.js";
-import { executarJob } from "./job.js";
+import { iniciarHttp, intervaloPainelMin } from "./http.js";
+import { executarJob, jobOcupado, retomarHistorico } from "./job.js";
 
 function formatarProxima(data: Date | null): string {
   if (!data) return "(sem próxima)";
@@ -17,13 +17,25 @@ function formatarProxima(data: Date | null): string {
 
 async function main(): Promise<void> {
   const config = carregarConfig();
+  retomarHistorico();
   iniciarHttp(config);
 
   if (config.executar_ao_iniciar) {
-    const resultado = await executarJob(config);
-    if (resultado === "ocupado") {
-      console.warn("▶ Checagem inicial ignorada: já em andamento.");
-    }
+    await executarJob(config);
+  }
+
+  // Painel: checagem silenciosa (sem webhook) — quem avisa é o n8n.
+  const intervalo = intervaloPainelMin();
+  if (intervalo) {
+    const checarPainel = () => {
+      if (jobOcupado()) return;
+      executarJob(config, { notificar: false }).catch((erro) =>
+        console.error(`▶ Checagem do painel falhou: ${erro instanceof Error ? erro.message : String(erro)}`),
+      );
+    };
+    if (!config.executar_ao_iniciar) checarPainel();
+    setInterval(checarPainel, intervalo * 60_000);
+    console.log(`▶ Painel: checagem a cada ${intervalo} min`);
   }
 
   if (!config.agendamento) {
@@ -38,11 +50,6 @@ async function main(): Promise<void> {
     config.agendamento,
     () => {
       executarJob(config)
-        .then((resultado) => {
-          if (resultado === "ocupado") {
-            console.warn("Cron pulada: já existe uma checagem em andamento.");
-          }
-        })
         .catch((erro) => {
           console.error("Falha na execução agendada:", erro);
         });

@@ -1,6 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AppConfig } from "./types.js";
-import { executarJob, jobOcupado } from "./job.js";
+import { executarJob, jobOcupado, statusPainel } from "./job.js";
+import { PAINEL_HTML } from "./painel.js";
+import { diaDe, lerDia, listarDias, resumirDia } from "./historico.js";
+import { conferirLote, depsReais, rodarCiclo } from "./ciclo.js";
+import type { ItemLote } from "./relatorio.js";
 import { localizarInvoicePorNf, listarNotasAutorizadas, tetosPorSerie, validarUsuarioMl } from "./ml-invoices.js";
 import { consultarEstadoNerus, diagnosticarNota, classificarEntregas } from "./diagnostico.js";
 
@@ -82,6 +86,18 @@ async function responderEntrega(
   }
 }
 
+/** Valida a lista de NFs que volta do n8n (fronteira de confiança: corpo HTTP). */
+export function lerNotas(v: unknown): { numero: number; serie: number }[] | null {
+  if (!Array.isArray(v)) return null;
+  const notas = v.map((n) => ({ numero: Number(n?.numero), serie: Number(n?.serie) }));
+  return notas.every((n) => Number.isInteger(n.numero) && n.numero > 0 && Number.isInteger(n.serie) && n.serie > 0) ? notas : null;
+}
+
+export function intervaloPainelMin(): number {
+  const v = Number(process.env.PAINEL_INTERVALO_MIN ?? 5);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
 export function iniciarHttp(config: AppConfig): void {
   const porta = Number(process.env.PORT ?? config.http?.porta ?? 8080);
   const host = "0.0.0.0";
@@ -91,6 +107,83 @@ export function iniciarHttp(config: AppConfig): void {
 
     if (url.pathname === "/health" && req.method === "GET") {
       json(res, 200, { ok: true, ocupado: jobOcupado() });
+      return;
+    }
+
+    if (url.pathname === "/painel" && req.method === "GET") {
+      if (!autorizado(req, tokenMonitor(config), url)) {
+        json(res, 401, { ok: false, erro: "token inválido (use /painel?token=...)" });
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(PAINEL_HTML);
+      return;
+    }
+
+    if (url.pathname === "/status" && req.method === "GET") {
+      if (!autorizado(req, tokenMonitor(config), url)) {
+        json(res, 401, { ok: false, erro: "token inválido" });
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        ocupado: jobOcupado(),
+        intervaloMin: intervaloPainelMin(),
+        cliente: config.cliente,
+        ...statusPainel(),
+      });
+      return;
+    }
+
+    if (url.pathname === "/historico" && req.method === "GET") {
+      if (!autorizado(req, tokenMonitor(config), url)) {
+        json(res, 401, { ok: false, erro: "token inválido" });
+        return;
+      }
+      const dia = url.searchParams.get("dia") ?? diaDe(new Date());
+      const d = lerDia(dia);
+      json(res, 200, { ok: true, dia, dias: listarDias(), resumo: d ? resumirDia(d) : null, ...(d ?? {}) });
+      return;
+    }
+
+    if (url.pathname === "/ciclo" && req.method === "POST") {
+      if (!autorizado(req, tokenMonitor(config), url)) {
+        json(res, 401, { ok: false, erro: "token inválido" });
+        return;
+      }
+      try {
+        const body = await lerJson(req);
+        logPasso("Ciclo: checar, diagnosticar e decidir espera");
+        const r = await rodarCiclo(depsReais(config), String(body.execucao ?? ""));
+        console.log(`   Ciclo: ${r.status}, ${r.lote.length} NF(s) no lote, espera ${r.espera}`);
+        json(res, 200, { ok: true, ...r });
+      } catch (erro) {
+        console.error(`▶ Ciclo falhou: ${msgErro(erro)}`);
+        json(res, 500, { ok: false, erro: msgErro(erro) });
+      }
+      return;
+    }
+
+    if (url.pathname === "/ciclo/conferir" && req.method === "POST") {
+      if (!autorizado(req, tokenMonitor(config), url)) {
+        json(res, 401, { ok: false, erro: "token inválido" });
+        return;
+      }
+      try {
+        const body = await lerJson(req);
+        const notas = lerNotas(body.notas);
+        if (!notas || !Array.isArray(body.lote)) {
+          json(res, 400, { ok: false, erro: "informe notas[] ({numero, serie}) e lote[]" });
+          return;
+        }
+        logPasso(`Ciclo: conferir ${notas.length} NF(s) no FTP`);
+        const r = await conferirLote(depsReais(config), { notas, lote: body.lote as ItemLote[], execucao: String(body.execucao ?? "") });
+        console.log(`   Conferência: ${r.noFtp}/${r.total} no FTP`);
+        json(res, 200, { ok: true, ...r });
+      } catch (erro) {
+        console.error(`▶ Conferência falhou: ${msgErro(erro)}`);
+        json(res, 500, { ok: false, erro: msgErro(erro) });
+      }
       return;
     }
 
@@ -104,10 +197,6 @@ export function iniciarHttp(config: AppConfig): void {
         const notificar = url.searchParams.get("notify") !== "false";
         logPasso(notificar ? "Checar FTP e teto ML" : "Rechecar FTP");
         const resultado = await executarJob(config, { notificar });
-        if (resultado === "ocupado") {
-          json(res, 409, { ok: false, erro: "já existe uma checagem em andamento" });
-          return;
-        }
         json(res, 200, { ok: true, ...resultado });
       } catch (erro) {
         console.error(`▶ Checar FTP falhou: ${msgErro(erro)}`);
@@ -266,7 +355,7 @@ export function iniciarHttp(config: AppConfig): void {
     json(res, 404, {
       ok: false,
       erro:
-        "use GET /health, POST /executar, GET /ml/me, GET /ml/invoice, GET /ml/teto, POST /diagnostico ou POST /diagnostico/entrega",
+        "use GET /health, GET /painel, GET /status, GET /historico, POST /ciclo, POST /ciclo/conferir, POST /executar, GET /ml/me, GET /ml/invoice, GET /ml/teto, POST /diagnostico ou POST /diagnostico/entrega",
     });
   });
 
