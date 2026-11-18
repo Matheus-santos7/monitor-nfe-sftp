@@ -6,7 +6,7 @@ import { contingenciaLigada } from "./ciclo.js";
 import { canaisDoAmbiente } from "./avisos.js";
 import { configurarAgenda, depsOrquestradorReais, dispararCiclo, modoAgenda } from "./orquestrador.js";
 
-const AGENDA_PADRAO = "0 8-18 * * 1-5"; // seg–sex, de hora em hora, 8h–18h (o mesmo cron do workflow n8n)
+const AGENDA_PADRAO = "0 8-18 * * 1-5"; // seg–sex, de hora em hora, 8h–18h
 
 function main(): void {
   const config = carregarConfig();
@@ -33,11 +33,11 @@ function main(): void {
   console.log(`▶ Painel: checagem a cada ${intervalo} min`);
 }
 
-/** MODO_AGENDA: off (o n8n agenda) · sombra (roda sem contingência e sem enviar avisos) · ativo (substitui o n8n). */
+/** MODO_AGENDA: off (pausado) · sombra (roda sem contingência e sem enviar avisos) · ativo (produção). */
 function iniciarAgenda(config: ReturnType<typeof carregarConfig>): void {
   const modo = modoAgenda();
   if (modo === "off") {
-    console.log("▶ Agenda do ciclo desligada (MODO_AGENDA=off): quem agenda é o n8n");
+    console.log("▶ Agenda do ciclo desligada (MODO_AGENDA=off): o monitor só serve o painel");
     return;
   }
   const expressao = process.env.AGENDA_CICLO?.trim() || AGENDA_PADRAO;
@@ -52,7 +52,7 @@ function iniciarAgenda(config: ReturnType<typeof carregarConfig>): void {
   console.log(
     sombra
       ? `▶ Agenda do ciclo em SOMBRA (${expressao}): roda sem contingência e não envia avisos`
-      : `▶ Agenda do ciclo ATIVA (${expressao}): o monitor agenda, espera e avisa (desative o workflow do n8n)`,
+      : `▶ Agenda do ciclo ATIVA (${expressao}): o monitor agenda, espera e avisa`,
   );
   if (!sombra && !canaisDoAmbiente().length) {
     console.warn("▶ ATENÇÃO: nenhum canal de aviso configurado (GOOGLE_CHAT_WEBHOOK_URL, WHATSAPP_WEBHOOK_URL, SMTP_HOST + ALERT_EMAIL_TO)");

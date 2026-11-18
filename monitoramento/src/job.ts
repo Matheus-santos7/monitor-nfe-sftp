@@ -133,7 +133,7 @@ export function retomarHistorico(): void {
   painel.ausentesDesde = Object.fromEntries(ausentesDesde);
 }
 
-/** Serializa as checagens: quem chega com outra em curso espera ela terminar (n8n + loop do painel). */
+/** Serializa as checagens: quem chega com outra em curso espera ela terminar (ciclo agendado + loop do painel). */
 export function executarJob(config?: AppConfig): Promise<ResultadoJob> {
   const rodada = fila.then(() => rodarJob(config));
   fila = rodada.catch(() => undefined);

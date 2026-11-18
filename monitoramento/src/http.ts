@@ -4,10 +4,7 @@ import type { AppConfig } from "./types.js";
 import { executarJob, jobOcupado, statusPainel } from "./job.js";
 import { PAINEL_HTML } from "./painel.js";
 import { diaDe, lerDia, listarDias, resumirDia } from "./historico.js";
-import { conferirLote, depsReais, rodarCiclo } from "./ciclo.js";
 import { depsOrquestradorReais, dispararCiclo, estadoCiclo, type DepsOrquestrador } from "./orquestrador.js";
-import type { ItemLote } from "./relatorio.js";
-import type { Passo, ProximaAcao } from "./diagnostico.js";
 import { listarNotasAutorizadas, tetosPorSerie } from "./ml-invoices.js";
 
 function msgErro(erro: unknown): string {
@@ -50,105 +47,6 @@ export function autorizado(req: IncomingMessage, token?: string, url?: URL): boo
   return false;
 }
 
-/** Erro de entrada do cliente (corpo inválido/grande) → 4xx em vez de 500. */
-export class ErroEntrada extends Error {
-  constructor(
-    readonly status: 400 | 413,
-    mensagem: string,
-  ) {
-    super(mensagem);
-  }
-}
-
-const LIMITE_CORPO = 1_000_000;
-
-async function lerJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  let tamanho = 0;
-  for await (const c of req) {
-    const b = Buffer.isBuffer(c) ? c : Buffer.from(c);
-    tamanho += b.length;
-    if (tamanho > LIMITE_CORPO) throw new ErroEntrada(413, "corpo maior que 1 MB");
-    chunks.push(b);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8").trim();
-  if (!raw) return {};
-  let v: unknown;
-  try {
-    v = JSON.parse(raw);
-  } catch {
-    throw new ErroEntrada(400, "JSON inválido");
-  }
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw new ErroEntrada(400, "o corpo deve ser um objeto JSON");
-  return v as Record<string, unknown>;
-}
-
-const MAX_NOTAS = 500;
-const inteiroPositivo = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
-const texto = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
-const ACOES = new Set<ProximaAcao>(["nenhuma", "esperar_entrega", "contigencia", "rechecar_ftp"]);
-const STATUS_PASSO = new Set<Passo["status"]>(["ok", "alerta", "erro", "info"]);
-
-/** Valida a lista de NFs que volta do n8n (fronteira de confiança: corpo HTTP). Vazia ou inválida = null. */
-export function lerNotas(v: unknown): { numero: number; serie: number }[] | null {
-  if (!Array.isArray(v) || !v.length || v.length > MAX_NOTAS) return null;
-  const notas: { numero: number; serie: number }[] = [];
-  for (const n of v) {
-    if (!n || typeof n !== "object" || !inteiroPositivo(n.numero) || !inteiroPositivo(n.serie)) return null;
-    notas.push({ numero: n.numero, serie: n.serie });
-  }
-  return notas;
-}
-
-/** Valida o lote que volta do n8n: só repassa campos com o tipo certo para os relatórios. Inválido = null. */
-export function lerLote(v: unknown): ItemLote[] | null {
-  if (!Array.isArray(v) || v.length > MAX_NOTAS) return null;
-  const lote: ItemLote[] = [];
-  for (const i of v) {
-    if (!i || typeof i !== "object" || !inteiroPositivo(i.numero) || !inteiroPositivo(i.serie)) return null;
-    const passos = Array.isArray(i.passos)
-      ? i.passos
-          .filter((p: unknown): p is Record<string, unknown> => !!p && typeof p === "object")
-          .map((p: Record<string, unknown>) => ({
-            id: texto(p.id) ?? "",
-            titulo: texto(p.titulo) ?? "",
-            status: STATUS_PASSO.has(p.status as Passo["status"]) ? (p.status as Passo["status"]) : "info",
-            detalhe: texto(p.detalhe) ?? "",
-          }))
-      : undefined;
-    const rastro = Array.isArray(i.rastro)
-      ? i.rastro
-          .filter((r: unknown): r is Record<string, unknown> => !!r && typeof r === "object")
-          .map((r: Record<string, unknown>) => ({
-            n: Number(r.n) || 0,
-            tabela: texto(r.tabela) ?? "",
-            executado: r.executado === true,
-            filtro: texto(r.filtro) ?? "",
-            linhas: Number(r.linhas) || 0,
-            detalhe: texto(r.detalhe) ?? "",
-          }))
-      : undefined;
-    const c = i.contigencia;
-    lote.push({
-      referencia: texto(i.referencia) ?? `${i.numero}/${i.serie}`,
-      numero: i.numero,
-      serie: i.serie,
-      invoiceId: texto(i.invoiceId) ?? null,
-      chave: texto(i.chave) ?? null,
-      proximaAcao: ACOES.has(i.proximaAcao) ? i.proximaAcao : "nenhuma",
-      diagnostico: texto(i.diagnostico) ?? "",
-      passos,
-      contigencia:
-        c && typeof c === "object" && typeof c.notificationId === "string"
-          ? { notificationId: c.notificationId, httpStatus: Number(c.httpStatus) || 0 }
-          : null,
-      rastro,
-      mensagem: texto(i.mensagem),
-    });
-  }
-  return lote;
-}
-
 export function intervaloPainelMin(): number {
   const v = Number(process.env.PAINEL_INTERVALO_MIN ?? 5);
   return Number.isFinite(v) && v > 0 ? v : 0;
@@ -161,10 +59,6 @@ export function iniciarHttp(config: AppConfig): void {
   const server = createServer((req, res) => {
     // Nenhum erro de rota pode virar unhandled rejection (derrubaria o processo e o painel).
     rotear(config, req, res).catch((erro) => {
-      if (erro instanceof ErroEntrada) {
-        if (!res.headersSent) json(res, erro.status, { ok: false, erro: erro.message });
-        return;
-      }
       console.error(`▶ Erro inesperado em ${req.method} ${req.url}: ${msgErro(erro)}`);
       if (!res.headersSent) json(res, 500, { ok: false, erro: "erro interno" });
       else res.end();
@@ -233,25 +127,6 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
     return;
   }
 
-  if (url.pathname === "/ciclo" && req.method === "POST") {
-    if (!autorizado(req, tokenMonitor(config), url)) {
-      json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
-      return;
-    }
-    try {
-      const body = await lerJson(req);
-      logPasso("Ciclo: checar, diagnosticar e decidir espera");
-      const r = await rodarCiclo(depsReais(config), String(body.execucao ?? ""));
-      console.log(`   Ciclo: ${r.status}, ${r.lote.length} NF(s) no lote, espera ${r.espera}`);
-      json(res, 200, { ok: true, ...r });
-    } catch (erro) {
-      if (erro instanceof ErroEntrada) throw erro;
-      console.error(`▶ Ciclo falhou: ${msgErro(erro)}`);
-      json(res, 500, { ok: false, erro: msgErro(erro) });
-    }
-    return;
-  }
-
   if (url.pathname === "/ciclo/agora" && req.method === "POST") {
     if (!autorizado(req, tokenMonitor(config), url)) {
       json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
@@ -259,38 +134,12 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
     }
     const { modo } = estadoCiclo();
     if (modo === "off") {
-      // com o n8n agendando, uma rodada daqui somaria contingência e avisos aos dele
-      json(res, 409, { ok: false, erro: 'agenda desligada (MODO_AGENDA=off): use o "Executar agora" do n8n' });
+      json(res, 409, { ok: false, erro: "agenda desligada (MODO_AGENDA=off): o monitor está pausado" });
       return;
     }
     depsManual ??= depsOrquestradorReais(config);
     const iniciado = dispararCiclo(depsManual, { origem: "manual", sombra: modo === "sombra" });
     json(res, iniciado ? 202 : 409, iniciado ? { ok: true, ciclo: estadoCiclo() } : { ok: false, erro: "já há um ciclo em andamento" });
-    return;
-  }
-
-  if (url.pathname === "/ciclo/conferir" && req.method === "POST") {
-    if (!autorizado(req, tokenMonitor(config), url)) {
-      json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
-      return;
-    }
-    try {
-      const body = await lerJson(req);
-      const notas = lerNotas(body.notas);
-      const lote = lerLote(body.lote);
-      if (!notas || !lote) {
-        json(res, 400, { ok: false, erro: "informe notas[] (1–500 itens {numero, serie} inteiros) e lote[] (itens com numero e serie)" });
-        return;
-      }
-      logPasso(`Ciclo: conferir ${notas.length} NF(s) no FTP`);
-      const r = await conferirLote(depsReais(config), { notas, lote, execucao: String(body.execucao ?? "") });
-      console.log(`   Conferência: ${r.noFtp}/${r.total} no FTP`);
-      json(res, 200, { ok: true, ...r });
-    } catch (erro) {
-      if (erro instanceof ErroEntrada) throw erro;
-      console.error(`▶ Conferência falhou: ${msgErro(erro)}`);
-      json(res, 500, { ok: false, erro: msgErro(erro) });
-    }
     return;
   }
 
@@ -334,6 +183,6 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
   json(res, 404, {
     ok: false,
     erro:
-      "use GET /health, GET /painel, GET /status, GET /historico, POST /ciclo, POST /ciclo/agora, POST /ciclo/conferir ou GET /ml/teto",
+      "use GET /health, GET /painel, GET /status, GET /historico, POST /ciclo/agora ou GET /ml/teto",
   });
 }

@@ -1,6 +1,5 @@
-// Ciclo completo de monitoramento (antes em nós Code do n8n): checar → diagnosticar cada NF ausente →
-// decidir a espera do lote → conferir no FTP. O n8n só agenda, espera e envia `mensagens`.
-// Stateless: o lote volta do n8n no corpo de /ciclo/conferir (nada de $getWorkflowStaticData).
+// Regra do ciclo: checar → diagnosticar cada NF ausente → decidir a espera do lote → conferir no FTP.
+// Quem agenda, espera e envia `mensagens` é o orquestrador.ts. Stateless: o lote é passado de volta para conferirLote.
 import type { AppConfig } from "./types.js";
 import { executarJob, type ResultadoJob } from "./job.js";
 import { localizarInvoicePorNf, validarUsuarioMl } from "./ml-invoices.js";

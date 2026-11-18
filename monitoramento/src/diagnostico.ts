@@ -796,7 +796,7 @@ export async function diagnosticarNota(opts: {
     : decidirAcao(estado);
   let contigencia: RelatorioDiagnostico["contigencia"] = null;
 
-  // Trava contra renotificar a mesma invoice duas vezes (timeout do n8n seguido de "Executar agora", chamadas repetidas).
+  // Trava contra renotificar a mesma invoice duas vezes ("Executar agora" repetido, restart no meio do ciclo).
   const anterior =
     decisao.proximaAcao === "contigencia" && opts.executarContigencia !== false ? reservarContingencia(invoiceId) : null;
   if (anterior !== null) {

@@ -1,12 +1,12 @@
-// Ciclo completo sem n8n: /ciclo → espera do lote → conferência (→ 2 min → de novo) → avisos.
-// Mesmo grafo do workflows/monitor-sftp.json, em código e testado. Quem dispara: a agenda (index.ts) e o painel.
+// Ciclo completo: checagem/diagnóstico → espera do lote → conferência (→ 2 min → de novo) → avisos.
+// Quem dispara: a agenda (index.ts) e o botão "Executar agora" do painel.
 import { conferirLote, depsReais, rodarCiclo, type ResultadoCiclo, type ResultadoConferencia } from "./ciclo.js";
 import { canaisDoAmbiente, enviarAviso, type ResultadoEnvio } from "./avisos.js";
 import { registrarEventoAviso } from "./job.js";
 import type { Mensagem } from "./relatorio.js";
 import type { AppConfig } from "./types.js";
 
-/** off = não agenda (n8n manda) · sombra = roda sem contingência e sem enviar avisos · ativo = substitui o n8n. */
+/** off = pausado · sombra = roda sem contingência e sem enviar avisos · ativo = produção. */
 export type ModoAgenda = "off" | "sombra" | "ativo";
 
 export function modoAgenda(env: Record<string, string | undefined> = process.env): ModoAgenda {

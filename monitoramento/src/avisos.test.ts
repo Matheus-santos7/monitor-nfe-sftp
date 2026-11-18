@@ -13,7 +13,7 @@ function fetchFalso(status: Record<string, number> = {}) {
   return { f, chamadas };
 }
 
-test("canais: só os configurados; Chat e WhatsApp com o mesmo corpo que o n8n enviava", async () => {
+test("canais: só os configurados; Chat recebe {text}, WhatsApp {number, text}, e-mail com assunto", async () => {
   const { f, chamadas } = fetchFalso();
   const emails: unknown[] = [];
   const canais = canaisDoAmbiente(

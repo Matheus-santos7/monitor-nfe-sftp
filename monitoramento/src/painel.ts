@@ -128,7 +128,7 @@ export const PAINEL_HTML = `<!doctype html>
     ], x.totalAusentes !== 0 ? "velho" : "")) : []));
   }
 
-  const MODO = { off: "desligada — quem agenda é o n8n", sombra: "SOMBRA — roda sem contingência e sem enviar avisos", ativo: "ativa — o monitor agenda, espera e avisa" };
+  const MODO = { off: "desligada (MODO_AGENDA=off) — monitor pausado", sombra: "SOMBRA — roda sem contingência e sem enviar avisos", ativo: "ativa — o monitor agenda, espera e avisa" };
   const STATUS_CICLO = { ok: "✅ ok", degradado: "⚠️ cobertura parcial", alerta: "⚠️ alerta (furos)", falhou: "❌ falhou" };
   const hm = (iso) => new Date(iso).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
   function renderCiclo(c) {
@@ -145,7 +145,7 @@ export const PAINEL_HTML = `<!doctype html>
     } else if (c.modo !== "off") linhas.push("Nenhum ciclo rodou desde que o monitor subiu.");
     $("ciclo").replaceChildren(...linhas.map(item));
     $("executar").disabled = c.modo === "off" || c.emAndamento;
-    $("executar").title = c.modo === "off" ? "Com MODO_AGENDA=off o ciclo é do n8n" : c.emAndamento ? "Já há um ciclo em andamento" : "";
+    $("executar").title = c.modo === "off" ? "Com MODO_AGENDA=off o monitor está pausado" : c.emAndamento ? "Já há um ciclo em andamento" : "";
   }
   $("executar").onclick = async () => {
     const real = ultimo && ultimo.ciclo && ultimo.ciclo.modo === "ativo";

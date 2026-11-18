@@ -1,4 +1,4 @@
-// Envio dos avisos (Google Chat, e-mail, WhatsApp) — antes nos nós "Avisar …" do n8n.
+// Envio dos avisos (Google Chat, e-mail, WhatsApp).
 // Cada canal é independente: um que falha não impede os outros. Canal sem variável no .env é pulado.
 import nodemailer from "nodemailer";
 import type { Mensagem } from "./relatorio.js";
@@ -28,7 +28,7 @@ const depsReais: DepsCanais = {
   criarTransporte: (o) => nodemailer.createTransport(o),
 };
 
-/** Canais configurados no ambiente, no mesmo formato que o n8n enviava. */
+/** Canais configurados no ambiente. */
 export function canaisDoAmbiente(env: Env = process.env, deps: DepsCanais = depsReais): Canal[] {
   const canais: Canal[] = [];
 

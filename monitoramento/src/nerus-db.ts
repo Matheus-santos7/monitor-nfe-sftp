@@ -24,7 +24,7 @@ export function configNerusDb() {
   };
 }
 
-const QUERY_TIMEOUT_MS = 30_000; // túnel travado não pode prender o /ciclo até o timeout de 600 s do n8n
+const QUERY_TIMEOUT_MS = 30_000; // túnel travado não pode prender o ciclo indefinidamente
 
 type Aberta = { conn: mysql.Connection; fechar: () => Promise<void> };
 

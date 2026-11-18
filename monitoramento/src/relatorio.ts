@@ -1,4 +1,4 @@
-// Textos dos avisos (Chat / e-mail / WhatsApp) enviados pelo n8n a partir de /ciclo e /ciclo/conferir.
+// Textos dos avisos (Chat / e-mail / WhatsApp) montados pelo ciclo e enviados pelo orquestrador.
 import type { ItemRastro, Passo, ProximaAcao } from "./diagnostico.js";
 import type { ResultadoSerie } from "./types.js";
 
