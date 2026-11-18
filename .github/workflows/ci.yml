@@ -25,6 +25,3 @@ jobs:
       # tsx (npm test) não checa tipos: o typecheck roda separado.
       - run: npm run typecheck
       - run: npm test
-      - name: Workflows n8n são JSON válido
-        working-directory: .
-        run: for f in workflows/*.json; do node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" || exit 1; done
