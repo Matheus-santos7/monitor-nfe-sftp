@@ -2,7 +2,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { timingSafeEqual } from "node:crypto";
 import type { AppConfig } from "./types.js";
 import { executarJob, jobOcupado, statusPainel } from "./job.js";
-import { PAINEL_HTML } from "./painel.js";
 import { diaDe, lerDia, listarDias, resumirDia } from "./historico.js";
 import { depsOrquestradorReais, dispararCiclo, estadoCiclo, type DepsOrquestrador } from "./orquestrador.js";
 import { listarNotasAutorizadas, tetosPorSerie } from "./ml-invoices.js";
@@ -37,14 +36,39 @@ function igual(a: unknown, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-/** Sem token configurado, nega tudo (fail-closed): POST /ciclo dispara contingência real. */
-export function autorizado(req: IncomingMessage, token?: string, url?: URL): boolean {
-  if (!token) return false;
-  if (igual(req.headers.authorization, `Bearer ${token}`)) return true;
-  if (igual(req.headers["x-token"], token)) return true;
-  // ?token= só no /painel (abrir no navegador); nas demais rotas vazaria em log de proxy.
-  if (url?.pathname === "/painel" && igual(url.searchParams.get("token"), token)) return true;
-  return false;
+/** operacao = time técnico (Executar agora, /ml/teto) · leitura = time e cliente (status, histórico). */
+export type Permissao = "operacao" | "leitura";
+export type Tokens = { operacao?: string; leitura?: string };
+
+function tokens(config: AppConfig): Tokens {
+  return { operacao: tokenMonitor(config), leitura: process.env.PAINEL_TOKEN?.trim() || undefined };
+}
+
+/**
+ * Sem token de operação configurado, nega tudo (fail-closed): o Executar agora pode disparar contingência real.
+ * Só header (Authorization: Bearer ou X-Token); token na URL vazaria em log de proxy.
+ */
+export function permissao(req: IncomingMessage, t: Tokens): Permissao | null {
+  if (!t.operacao) return null;
+  const bate = (tok?: string) => !!tok && (igual(req.headers.authorization, `Bearer ${tok}`) || igual(req.headers["x-token"], tok));
+  if (bate(t.operacao)) return "operacao";
+  if (t.leitura && t.leitura !== t.operacao && bate(t.leitura)) return "leitura";
+  return null;
+}
+
+/** Responde 401/403 e devolve null se o token não alcança o nível pedido. */
+function exigir(req: IncomingMessage, res: ServerResponse, config: AppConfig, nivel: Permissao): Permissao | null {
+  const t = tokens(config);
+  const p = permissao(req, t);
+  if (!p) {
+    json(res, 401, { ok: false, erro: t.operacao ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
+    return null;
+  }
+  if (nivel === "operacao" && p !== "operacao") {
+    json(res, 403, { ok: false, erro: "este token é só de leitura" });
+    return null;
+  }
+  return p;
 }
 
 export function intervaloPainelMin(): number {
@@ -80,32 +104,15 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
     return;
   }
 
-  if (url.pathname === "/painel" && req.method === "GET") {
-    if (!autorizado(req, tokenMonitor(config), url)) {
-      json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido (use /painel?token=...)" : "defina MONITOR_HTTP_TOKEN no .env" });
-      return;
-    }
-    res.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-      "Referrer-Policy": "no-referrer", // o token está na URL do painel
-      "X-Content-Type-Options": "nosniff",
-      "X-Robots-Tag": "noindex, nofollow", // painel interno com dados fiscais: nunca indexar
-    });
-    res.end(PAINEL_HTML);
-    return;
-  }
-
   if (url.pathname === "/status" && req.method === "GET") {
-    if (!autorizado(req, tokenMonitor(config), url)) {
-      json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
-      return;
-    }
+    const acesso = exigir(req, res, config, "leitura");
+    if (!acesso) return;
     json(res, 200, {
       ok: true,
       ocupado: jobOcupado(),
       intervaloMin: intervaloPainelMin(),
       cliente: config.cliente,
+      permissao: acesso,
       ciclo: estadoCiclo(),
       ...statusPainel(),
     });
@@ -113,10 +120,7 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
   }
 
   if (url.pathname === "/historico" && req.method === "GET") {
-    if (!autorizado(req, tokenMonitor(config), url)) {
-      json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
-      return;
-    }
+    if (!exigir(req, res, config, "leitura")) return;
     const dia = url.searchParams.get("dia") ?? diaDe(new Date());
     if (!/^\d{8}$/.test(dia)) {
       json(res, 400, { ok: false, erro: "dia deve ser AAAAMMDD" });
@@ -128,10 +132,7 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
   }
 
   if (url.pathname === "/ciclo/agora" && req.method === "POST") {
-    if (!autorizado(req, tokenMonitor(config), url)) {
-      json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
-      return;
-    }
+    if (!exigir(req, res, config, "operacao")) return;
     const { modo } = estadoCiclo();
     if (modo === "off") {
       json(res, 409, { ok: false, erro: "agenda desligada (MODO_AGENDA=off): o monitor está pausado" });
@@ -144,10 +145,7 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
   }
 
   if (url.pathname === "/ml/teto" && req.method === "GET") {
-    if (!autorizado(req, tokenMonitor(config), url)) {
-      json(res, 401, { ok: false, erro: tokenMonitor(config) ? "token inválido" : "defina MONITOR_HTTP_TOKEN no .env" });
-      return;
-    }
+    if (!exigir(req, res, config, "operacao")) return;
     try {
       logPasso("Consultar teto ML");
       const { start, end, notas } = await listarNotasAutorizadas({
@@ -183,6 +181,6 @@ async function rotear(config: AppConfig, req: IncomingMessage, res: ServerRespon
   json(res, 404, {
     ok: false,
     erro:
-      "use GET /health, GET /painel, GET /status, GET /historico, POST /ciclo/agora ou GET /ml/teto",
+      "use GET /health, GET /status, GET /historico, POST /ciclo/agora ou GET /ml/teto (o painel fica no serviço painel)",
   });
 }

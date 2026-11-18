@@ -1,5 +1,4 @@
-// Página do painel. Lê GET /status (o monitor checa SFTP + teto ML a cada PAINEL_INTERVALO_MIN).
-export const PAINEL_HTML = `<!doctype html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -49,7 +48,7 @@ export const PAINEL_HTML = `<!doctype html>
   </header>
   <div id="banner" class="banner aguardando" role="status" aria-live="polite">Carregando…</div>
 
-  <div class="linhah2"><h2>Ciclo de monitoramento</h2><button id="executar" type="button">Executar agora</button></div>
+  <div class="linhah2"><h2>Ciclo de monitoramento</h2><button id="executar" type="button" hidden>Executar agora</button></div>
   <div class="card"><ul id="ciclo"></ul></div>
 
   <h2>Avisos</h2>
@@ -68,7 +67,17 @@ export const PAINEL_HTML = `<!doctype html>
   <div class="card"><table><thead><tr><th>Série</th><th>XMLs no FTP</th><th>FTP</th><th>Teto ML</th><th>Última ML no FTP</th><th>Ausentes</th></tr></thead><tbody id="series"></tbody></table></div>
 </main>
 <script>
-  const token = new URLSearchParams(location.search).get("token") || "";
+  // Token: vem na URL (?token=) uma vez, fica só nesta aba e sai da barra de endereço (histórico, print, link copiado).
+  const token = (() => {
+    const daUrl = new URLSearchParams(location.search).get("token");
+    try {
+      if (daUrl) sessionStorage.setItem("token", daUrl);
+      if (daUrl) history.replaceState(null, "", location.pathname);
+      return daUrl || sessionStorage.getItem("token") || "";
+    } catch {
+      return daUrl || "";
+    }
+  })();
   const auth = { cache: "no-store", headers: { Authorization: "Bearer " + token } };
   const VELHO_MIN = 15; // furo com mais de 15 min já é atraso real, não latência de envio
   const $ = (id) => document.getElementById(id);
@@ -144,6 +153,7 @@ export const PAINEL_HTML = `<!doctype html>
         (u.erro ? " · " + u.etapaFalha + ": " + u.erro : ""));
     } else if (c.modo !== "off") linhas.push("Nenhum ciclo rodou desde que o monitor subiu.");
     $("ciclo").replaceChildren(...linhas.map(item));
+    $("executar").hidden = ultimo?.permissao !== "operacao"; // token de leitura (time/cliente) não opera
     $("executar").disabled = c.modo === "off" || c.emAndamento;
     $("executar").title = c.modo === "off" ? "Com MODO_AGENDA=off o monitor está pausado" : c.emAndamento ? "Já há um ciclo em andamento" : "";
   }
@@ -201,6 +211,11 @@ export const PAINEL_HTML = `<!doctype html>
   $("dia").onchange = (ev) => { diaEscolhido = ev.target.value; carregarHistorico(); };
 
   async function carregar() {
+    if (!token) {
+      $("banner").className = "banner erro";
+      $("banner").textContent = "Abra o painel pelo link com ?token=… que você recebeu.";
+      return;
+    }
     carregarHistorico();
     try {
       const resp = await fetch("/status", auth);
@@ -218,4 +233,4 @@ export const PAINEL_HTML = `<!doctype html>
   setInterval(() => ultimo && render(ultimo), 30000); // mantém o "há X min" vivo
 </script>
 </body>
-</html>`;
+</html>
