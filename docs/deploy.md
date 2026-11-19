@@ -157,6 +157,31 @@ api-monitor.seusetor.com.br {
 }
 ```
 
+**Load balancer da AWS (ALB) na frente** (o caso do servidor de implantação: `curl -sI https://<dns>` mostra `server: awselb/2.0`, e o DNS devolve vários IPs). O ALB faz o HTTPS, com o certificado do ACM, e encaminha cada nome para uma porta do servidor. Nesse caso:
+
+1. **Publique as portas para fora do container.** O ALB é outra máquina e não alcança `127.0.0.1`. No `docker-compose.yml` do servidor:
+   ```yaml
+   # api
+       ports:
+         - "9081:8080"
+   # painel
+       ports:
+         - "9080:80"
+   ```
+2. **Security Group da instância:** libere a entrada nas portas **9080 e 9081 só a partir do Security Group do ALB**, nunca de `0.0.0.0/0`. Sem HTTPS, essas portas não podem ficar abertas para a internet.
+3. **No ALB:** dois *target groups* apontando para a instância. Ajuste a regra de host do listener HTTPS (443) de cada um:
+
+   | Regra de host do listener | Target group | Porta | Health check |
+   |---|---|---|---|
+   | `PAINEL_HOST` | painel | 9080 | `GET /` → 200 |
+   | `API_HOST` | api | 9081 | `GET /health` → 200 |
+
+   O listener HTTP (80) redireciona para HTTPS (o padrão do ALB).
+4. **No `docker-compose.yml` do servidor,** `PAINEL_HOST` e `API_HOST` recebem os nomes reais do DNS. A proteção contra CSRF compara com o `PAINEL_HOST`, e o app reconhece o `API_HOST` pelo `Host` que o ALB repassa. Por esse endereço, o próprio app só aceita Bearer: o login, a sessão e o cookie ficam de fora, e o IP é a última entrada do `X-Forwarded-For`, que é a escrita pelo ALB. Nada disso depende de configurar o ALB.
+5. Não precisa do proxy próprio nem da rede de outro projeto. Deixe `networks: [monitor]` na `api` e no `painel`.
+
+O 502 do ALB quer dizer que o target está fora. Confira o health check do target group e se as portas estão publicadas fora do `127.0.0.1` (`sudo ss -tlnp | grep -E ':(9080|9081) '` deve mostrar `0.0.0.0`).
+
 **Caddy de outro projeto, em container** (o caso do servidor de implantação: `docker ps` mostra um `…-caddy-1` nas portas 80/443):
 
 1. Descubra a rede do Caddy e onde está o Caddyfile dele:

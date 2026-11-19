@@ -109,7 +109,7 @@ services:
     volumes:
       - monitor_data:/app/data # histórico, token do ML em uso, trava da contingência
     ports:
-      - "127.0.0.1:9081:8080" # API: só no próprio servidor; o proxy publica em https://API_HOST
+      - "127.0.0.1:9081:8080" # API: só no próprio servidor. Atrás de um ALB da AWS: "9081:8080" (ver deploy.md, 1b)
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -126,7 +126,7 @@ services:
     restart: unless-stopped
     depends_on: [api]
     ports:
-      - "127.0.0.1:9080:80" # painel: só no próprio servidor; o proxy publica em https://PAINEL_HOST
+      - "127.0.0.1:9080:80" # painel: só no próprio servidor. Atrás de um ALB da AWS: "9080:80" (ver deploy.md, 1b)
     networks: [monitor] # servidor com proxy em Docker: troque por [monitor, proxy_servidor] (ver networks:, no fim)
     logging: *logs
 
