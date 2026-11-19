@@ -50,15 +50,6 @@ export function carregarConfig(caminho = process.env.CONFIG_PATH ?? "config.yml"
       numero: Number(s.numero),
       nota_inicial: Number(s.nota_inicial),
     })),
-    webhooks: {
-      google_chat: bruto.webhooks?.google_chat || undefined,
-      painel: bruto.webhooks?.painel || undefined,
-      painel_token: bruto.webhooks?.painel_token
-        ? String(bruto.webhooks.painel_token)
-        : undefined,
-    },
-    agendamento: bruto.agendamento || undefined,
-    executar_ao_iniciar: Boolean(bruto.executar_ao_iniciar),
     http: {
       porta: Number(bruto.http?.porta ?? process.env.PORT ?? 8080),
       token: bruto.http?.token ? String(bruto.http.token) : undefined,

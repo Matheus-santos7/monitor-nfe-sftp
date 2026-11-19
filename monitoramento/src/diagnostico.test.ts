@@ -7,8 +7,17 @@ import {
   erroDeConsulta,
   horarioTabelaEBrasilia,
   montarPassos,
+  diagnosticarNota,
   type RelatorioDiagnostico,
 } from "./diagnostico.js";
+import { comSessaoNerus, queryNerus } from "./nerus-db.js";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { JANELA_CONTINGENCIA_MS, _reiniciarTrava, liberarContingencia, reservarContingencia } from "./nerus-contigencia.js";
+
+// a trava grava em disco: nos testes, numa pasta temporária (nunca no data/ real)
+process.env.CONTINGENCIAS_PATH = join(mkdtempSync(join(tmpdir(), "trava-")), "contingencias.json");
 
 test("classificarEntregas: SENT ganha de pending", () => {
   assert.equal(classificarEntregas([{ status: "PENDING" }, { status: "SENT" }]), "enviada");
@@ -145,45 +154,6 @@ function baseRelatorio(
   };
 }
 
-test("relatório: XML no FTP após contingência = resolvido, sem jargão nem 'aguardar'", () => {
-  const r = concluirRelatorio(baseRelatorio(), { xmlNoFtp: true, executionId: 37 });
-  assert.equal(r.resolvido, true);
-  assert.equal(r.precisaAdmin, false);
-  assert.match(r.assunto, /resolvido/);
-  assert.match(r.mensagem, /✅ Resolvido/);
-  assert.match(r.mensagem, /Nada a fazer/);
-  assert.match(r.mensagem, /não avisou o sistema/);
-  assert.match(r.mensagem, /contingência/);
-  assert.match(r.mensagem, /XML apareceu no FTP/);
-  assert.match(r.mensagem, /chave=35260833115817001802550020000065491986846029/);
-  assert.match(r.mensagem, /execução n8n=37/);
-  assert.doesNotMatch(r.mensagem, /Aguardar 1–3/);
-  assert.doesNotMatch(r.mensagem, /Onde a integração parou/);
-  assert.doesNotMatch(r.mensagem, /\[ERRO\]/);
-  const [humano, tecnico] = r.mensagem.split("Rastro técnico");
-  assert.doesNotMatch(humano, /notification_control/);
-  assert.doesNotMatch(humano, /fiscal_document_deliveries/);
-  assert.match(tecnico, /nerus_gateway.notification_control/);
-  assert.match(tecnico, /não executado — sem notification_control.id/);
-  assert.match(tecnico, /nerus_o2.invoice/);
-  assert.match(tecnico, /nerus_o2.fiscal_document_deliveries/);
-  assert.match(tecnico, /notification_id=e245afd8-6ab6-41c3-8585-6c2946be49ed/);
-  assert.match(tecnico, /Rechecar SFTP → XML encontrado/);
-});
-
-test("relatório: XML ainda ausente após contingência = precisa de atenção + onde parou", () => {
-  const r = concluirRelatorio(baseRelatorio(), { xmlNoFtp: false, executionId: 37 });
-  assert.equal(r.resolvido, false);
-  assert.equal(r.precisaAdmin, true);
-  assert.match(r.mensagem, /Ainda não resolvido/);
-  assert.match(r.mensagem, /Acionar o time técnico/);
-  assert.match(r.mensagem, /Onde a integração parou/);
-  assert.match(r.mensagem, /Mercado Livre avisou o sistema\? Não/);
-  assert.match(r.mensagem, /passos seguintes ainda não rodaram/);
-  assert.doesNotMatch(r.mensagem, /XML enviado ao FTP/);
-  assert.doesNotMatch(r.mensagem, /Nada a fazer/);
-});
-
 test("relatório: rastro técnico percorre tabelas, ids e status", () => {
   const r = concluirRelatorio(
     baseRelatorio({
@@ -200,7 +170,6 @@ test("relatório: rastro técnico percorre tabelas, ids e status", () => {
       proximaAcao: "rechecar_ftp",
       contigencia: null,
     }),
-    { xmlNoFtp: true, executionId: 9 },
   );
   const tecnico = r.mensagem.split("Rastro técnico")[1] || "";
   assert.match(tecnico, /notification_control_id=484ce485-a27c-4e02-ad2b-4129dddf9c40/);
@@ -221,11 +190,129 @@ test("erroDeConsulta: ERRO na tabela é distinguível de 0 linhas", () => {
   assert.equal(falha?.tabela, "nerus_gateway.notification_control");
 });
 
-test("relatório: envio disparado mas XML ainda não listado", () => {
-  const r = concluirRelatorio(baseRelatorio({ proximaAcao: "rechecar_ftp" }), {
-    xmlNoFtp: false,
-    classificacaoEntregaAposEspera: "enviada",
+test("trava de contingência: mesma invoice não é renotificada duas vezes em 30 min", () => {
+  const t0 = Date.UTC(2026, 10, 18, 12, 0);
+  assert.equal(reservarContingencia("inv-trava", t0), null);
+  assert.equal(reservarContingencia("inv-trava", t0 + 5 * 60_000), t0);
+  assert.equal(reservarContingencia("outra-inv", t0 + 5 * 60_000), null);
+  assert.equal(reservarContingencia("inv-trava", t0 + JANELA_CONTINGENCIA_MS), null);
+  liberarContingencia("inv-trava");
+  assert.equal(reservarContingencia("inv-trava", t0 + JANELA_CONTINGENCIA_MS + 1), null);
+});
+
+test("sessão Nerus: queries do mesmo ciclo reaproveitam uma única abertura (falha não se repete por NF)", async () => {
+  const antes = process.env.NERUS_SSH_HOST;
+  delete process.env.NERUS_SSH_HOST; // abertura falha na hora, sem rede
+  try {
+    const erros = await comSessaoNerus(async () => [
+      await queryNerus("SELECT 1").catch((e: unknown) => e),
+      await queryNerus("SELECT 2").catch((e: unknown) => e),
+    ]);
+    assert.ok(erros[0] instanceof Error);
+    assert.equal(erros[0], erros[1]); // mesmo objeto = abriu uma vez só
+    const [a, b] = [await queryNerus("SELECT 1").catch((e: unknown) => e), await queryNerus("SELECT 2").catch((e: unknown) => e)];
+    assert.notEqual(a, b); // fora da sessão, cada query abre a sua
+  } finally {
+    if (antes !== undefined) process.env.NERUS_SSH_HOST = antes;
+  }
+});
+
+test("relatório: contingência segurada pela trava diz que o aviso já foi reenviado", () => {
+  const r = concluirRelatorio(
+    baseRelatorio({
+      proximaAcao: "contigencia",
+      passos: [{ id: "contigencia", titulo: "Contingência", status: "info", detalhe: "Aviso já reenviado às 10:05; não repetido (janela de 30 min)." }],
+    }),
+  );
+  assert.match(r.mensagem, /já reenviado às 10:05/);
+  assert.doesNotMatch(r.mensagem, /não é falta de notificação/);
+});
+
+// diagnosticarNota com Nerus e contingência falsos: o caminho que faz a renotificação real.
+const semAvisoMl = async () => ({ notificacao: null, alvos: [], invoice: null, entregas: [], rastro: [] });
+
+function contadorRenotificar(falhar = false) {
+  const chamadas: string[] = [];
+  const renotificar = async (o: { invoiceId: string }) => {
+    chamadas.push(o.invoiceId);
+    if (falhar) throw new Error("HTTP 502");
+    return { notificationId: "n-1", httpStatus: 200 };
+  };
+  return { chamadas, renotificar };
+}
+
+function comEnvNerus<T>(fn: () => Promise<T>): Promise<T> {
+  const antes = { u: process.env.ML_USER_ID, t: process.env.NERUS_TENANT_ID, a: process.env.ML_APPLICATION_ID };
+  process.env.ML_USER_ID = "1";
+  process.env.NERUS_TENANT_ID = "t";
+  process.env.ML_APPLICATION_ID = "2";
+  return fn().finally(() => {
+    for (const [k, v] of [["ML_USER_ID", antes.u], ["NERUS_TENANT_ID", antes.t], ["ML_APPLICATION_ID", antes.a]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   });
-  assert.match(r.mensagem, /Em andamento/);
-  assert.match(r.mensagem, /próximo ciclo/);
+}
+
+test("diagnosticarNota: sem aviso do ML renotifica uma vez; a 2ª chamada é segurada pela trava", () =>
+  comEnvNerus(async () => {
+    const { chamadas, renotificar } = contadorRenotificar();
+    const deps = { consultar: semAvisoMl, renotificar };
+    const nota = { invoiceId: "inv-diag-1", numero: 10, serie: 2 };
+    const r1 = await diagnosticarNota(nota, deps);
+    const r2 = await diagnosticarNota(nota, deps);
+    assert.deepEqual(chamadas, ["inv-diag-1"]);
+    assert.equal(r1.passos.find((p) => p.id === "contigencia")?.status, "ok");
+    assert.equal(r2.passos.find((p) => p.id === "contigencia")?.status, "info");
+    assert.equal(r2.proximaAcao, "contigencia");
+  }));
+
+test("diagnosticarNota: executarContigencia=false não renotifica", () =>
+  comEnvNerus(async () => {
+    const { chamadas, renotificar } = contadorRenotificar();
+    const r = await diagnosticarNota(
+      { invoiceId: "inv-diag-2", numero: 11, serie: 2, executarContigencia: false },
+      { consultar: semAvisoMl, renotificar },
+    );
+    assert.deepEqual(chamadas, []);
+    assert.equal(r.passos.find((p) => p.id === "contigencia"), undefined);
+  }));
+
+test("diagnosticarNota: falha na renotificação libera a trava e pede admin", () =>
+  comEnvNerus(async () => {
+    const falha = contadorRenotificar(true);
+    const nota = { invoiceId: "inv-diag-3", numero: 12, serie: 2 };
+    const r = await diagnosticarNota(nota, { consultar: semAvisoMl, renotificar: falha.renotificar });
+    assert.equal(r.precisaAdmin, true);
+    assert.equal(r.passos.find((p) => p.id === "contigencia")?.status, "erro");
+    const ok = contadorRenotificar();
+    await diagnosticarNota(nota, { consultar: semAvisoMl, renotificar: ok.renotificar });
+    assert.deepEqual(ok.chamadas, ["inv-diag-3"]); // trava liberada: o próximo ciclo tenta de novo
+  }));
+
+test("diagnosticarNota: consulta ao Nerus com erro não dispara contingência", () =>
+  comEnvNerus(async () => {
+    const { chamadas, renotificar } = contadorRenotificar();
+    const consultar = async () => ({
+      notificacao: null,
+      alvos: [],
+      invoice: null,
+      entregas: [],
+      rastro: [{ n: 1, tabela: "nerus_gateway.notification_control", executado: true, filtro: "", linhas: 0, detalhe: "ERRO: SSH timeout" }],
+    });
+    const r = await diagnosticarNota({ invoiceId: "inv-diag-4", numero: 13, serie: 2 }, { consultar, renotificar });
+    assert.deepEqual(chamadas, []);
+    assert.equal(r.proximaAcao, "nenhuma");
+    assert.equal(r.precisaAdmin, true);
+  }));
+
+test("trava de contingência sobrevive a um restart do monitor e poda as vencidas", () => {
+  const agora = Date.now();
+  assert.equal(reservarContingencia("inv-restart", agora), null);
+  _reiniciarTrava(); // simula restart: memória zerada, só o arquivo sobra
+  assert.equal(reservarContingencia("inv-restart", agora + 60_000), agora);
+  const gravado = JSON.parse(readFileSync(process.env.CONTINGENCIAS_PATH!, "utf8")) as Record<string, number>;
+  assert.equal(gravado["inv-restart"], agora);
+  _reiniciarTrava();
+  assert.equal(reservarContingencia("inv-restart", agora + JANELA_CONTINGENCIA_MS), null); // venceu: libera
 });

@@ -1,5 +1,5 @@
 # Copie para config.yml e preencha. Não commite senhas.
-#   cp config.example.yml config.yml
+#   cp -n config.example.yml config.yml
 
 cliente:
   nome: Loja Exemplo
@@ -22,16 +22,6 @@ series:
     nota_inicial: 1
   - numero: 2
     nota_inicial: 1
-
-webhooks:
-  google_chat: "https://chat.googleapis.com/v1/spaces/EXEMPLO/messages?key=EXEMPLO&token=EXEMPLO"
-  painel: "http://host.docker.internal:3000/api/eventos/sftp"
-  painel_token: "token-exemplo-da-loja"
-
-# Relógio é o n8n (Schedule Trigger). Deixe vazio para o monitor só atender HTTP.
-agendamento: ""
-# true = também roda na subida do container (não use com restart: dispara a cada recreate)
-executar_ao_iniciar: false
 
 http:
   porta: 8080

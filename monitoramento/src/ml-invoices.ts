@@ -4,7 +4,8 @@ import { partesDaChave } from "./chave.js";
 const API = "https://api.mercadolibre.com";
 const PADRAO_NFE = /(\d+)_(\d{44})(?:-procNFe)?\.xml$/i;
 const cacheZip = new Map<string, { nomes: string[]; exp: number }>();
-const CACHE_MS = 5 * 60 * 1000;
+// Quanto tempo o ZIP do ML (teto + invoice_id) é reaproveitado antes de baixar de novo. Maior = menos 429.
+const CACHE_MS = Math.max(1, Number(process.env.ML_TETO_CACHE_MIN ?? 5) || 5) * 60_000;
 
 export type InvoiceRelatorio = {
   invoiceId: string;

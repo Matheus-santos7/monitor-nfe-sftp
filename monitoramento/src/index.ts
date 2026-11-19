@@ -1,64 +1,62 @@
 import cron from "node-cron";
 import { carregarConfig } from "./config.js";
-import { iniciarHttp } from "./http.js";
-import { executarJob } from "./job.js";
+import { iniciarHttp, intervaloPainelMin } from "./http.js";
+import { executarJob, jobOcupado, retomarHistorico } from "./job.js";
+import { contingenciaLigada } from "./ciclo.js";
+import { canaisDoAmbiente } from "./avisos.js";
+import { configurarAgenda, depsOrquestradorReais, dispararCiclo, modoAgenda } from "./orquestrador.js";
 
-function formatarProxima(data: Date | null): string {
-  if (!data) return "(sem próxima)";
-  return new Intl.DateTimeFormat("pt-BR", {
-    weekday: "short",
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "America/Sao_Paulo",
-  }).format(data);
+const AGENDA_PADRAO = "0 8-18 * * 1-5"; // seg–sex, de hora em hora, 8h–18h
+
+function main(): void {
+  const config = carregarConfig();
+  retomarHistorico();
+  iniciarHttp(config);
+  console.log(
+    contingenciaLigada()
+      ? "▶ Contingência LIGADA: o ciclo renotifica o gateway fiscal de verdade"
+      : "▶ Contingência desligada (CONTINGENCIA≠on): o ciclo só diagnostica",
+  );
+  iniciarAgenda(config);
+
+  // Painel: checagem silenciosa, sem diagnóstico e sem aviso.
+  const intervalo = intervaloPainelMin();
+  if (!intervalo) return;
+  const checarPainel = () => {
+    if (jobOcupado()) return;
+    executarJob(config).catch((erro) =>
+      console.error(`▶ Checagem do painel falhou: ${erro instanceof Error ? erro.message : String(erro)}`),
+    );
+  };
+  checarPainel();
+  setInterval(checarPainel, intervalo * 60_000);
+  console.log(`▶ Painel: checagem a cada ${intervalo} min`);
 }
 
-async function main(): Promise<void> {
-  const config = carregarConfig();
-  iniciarHttp(config);
-
-  if (config.executar_ao_iniciar) {
-    const resultado = await executarJob(config);
-    if (resultado === "ocupado") {
-      console.warn("▶ Checagem inicial ignorada: já em andamento.");
-    }
-  }
-
-  if (!config.agendamento) {
+/** MODO_AGENDA: off (pausado) · sombra (roda sem contingência e sem enviar avisos) · ativo (produção). */
+function iniciarAgenda(config: ReturnType<typeof carregarConfig>): void {
+  const modo = modoAgenda();
+  if (modo === "off") {
+    console.log("▶ Agenda do ciclo desligada (MODO_AGENDA=off): o monitor só serve o painel");
     return;
   }
-
-  if (!cron.validate(config.agendamento)) {
-    throw new Error(`agendamento cron inválido: ${config.agendamento}`);
-  }
-
-  const tarefa = cron.schedule(
-    config.agendamento,
-    () => {
-      executarJob(config)
-        .then((resultado) => {
-          if (resultado === "ocupado") {
-            console.warn("Cron pulada: já existe uma checagem em andamento.");
-          }
-        })
-        .catch((erro) => {
-          console.error("Falha na execução agendada:", erro);
-        });
-    },
-    { timezone: "America/Sao_Paulo", noOverlap: true, name: "monitor-sftp" },
+  const expressao = process.env.AGENDA_CICLO?.trim() || AGENDA_PADRAO;
+  if (!cron.validate(expressao)) throw new Error(`AGENDA_CICLO inválida: ${expressao}`);
+  const deps = depsOrquestradorReais(config);
+  const sombra = modo === "sombra";
+  const tarefa = cron.schedule(expressao, () => void dispararCiclo(deps, { origem: "agenda", sombra }), {
+    timezone: "America/Sao_Paulo",
+    name: "ciclo",
+  });
+  configurarAgenda({ modo, expressao, proximo: () => tarefa.getNextRun() });
+  console.log(
+    sombra
+      ? `▶ Agenda do ciclo em SOMBRA (${expressao}): roda sem contingência e não envia avisos`
+      : `▶ Agenda do ciclo ATIVA (${expressao}): o monitor agenda, espera e avisa`,
   );
-
-  const proximas = tarefa.getNextRuns(4);
-  console.log(`Agendado: ${config.agendamento} (America/Sao_Paulo)`);
-  console.log(`Próximas execuções: ${proximas.map((d) => formatarProxima(d)).join(" · ")}`);
-  if (!config.executar_ao_iniciar) {
-    console.log("Aguardando o horário da cron (não executa na subida).");
+  if (!sombra && !canaisDoAmbiente().length) {
+    console.warn("▶ ATENÇÃO: nenhum canal de aviso configurado (GOOGLE_CHAT_WEBHOOK_URL, WHATSAPP_WEBHOOK_URL, SMTP_HOST + ALERT_EMAIL_TO)");
   }
 }
 
-main().catch((erro) => {
-  console.error(erro);
-  process.exit(1);
-});
+main();

@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main, developer]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: monitoramento
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: monitoramento/package-lock.json
+      - run: npm ci
+      # tsx (npm test) não checa tipos: o typecheck roda separado.
+      - run: npm run typecheck
+      - run: npm test
+      - name: JS do painel sem erro de sintaxe
+        working-directory: .
+        run: node -e "const h=require('fs').readFileSync('painel/index.html','utf8');new Function(h.split('<script>')[1].split('</script>')[0])"
+      - name: docker-compose.yml válido
+        working-directory: .
+        run: docker compose --env-file .env.example config -q
+      - name: modelo do servidor (servidor/docker-compose.yml) válido
+        working-directory: .
+        run: docker compose -f servidor/docker-compose.yml config -q
+
+  # Imagens: no PR só compila (pega Dockerfile quebrado antes do merge); no push da main ou de uma tag v*,
+  # publica no GHCR depois dos testes. O servidor baixa com: docker compose pull && docker compose up -d
+  imagens:
+    needs: monitor
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        servico:
+          - { nome: api, contexto: monitoramento }
+          - { nome: painel, contexto: painel }
+          - { nome: proxy, contexto: proxy }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/monitor-nfe-${{ matrix.servico.nome }}
+          # latest = última da main · sha-xxxxxxx = versão exata (rollback) · v1.2.3 quando houver tag
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=ref,event=tag
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.servico.contexto }}
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.servico.nome }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.servico.nome }}

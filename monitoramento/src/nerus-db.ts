@@ -1,6 +1,7 @@
 import { Client } from "ssh2";
 import mysql from "mysql2/promise";
 import { readFileSync } from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export type Linha = Record<string, unknown>;
 
@@ -23,7 +24,11 @@ export function configNerusDb() {
   };
 }
 
-export async function comMysqlNerus<T>(fn: (conn: mysql.Connection) => Promise<T>): Promise<T> {
+const QUERY_TIMEOUT_MS = 30_000; // túnel travado não pode prender o ciclo indefinidamente
+
+type Aberta = { conn: mysql.Connection; fechar: () => Promise<void> };
+
+async function abrirMysqlNerus(): Promise<Aberta> {
   const cfg = configNerusDb();
   const ssh = new Client();
   try {
@@ -53,13 +58,31 @@ export async function comMysqlNerus<T>(fn: (conn: mysql.Connection) => Promise<T
       stream: stream as import("node:net").Socket,
       connectTimeout: 20_000,
     });
-    try {
-      return await fn(conn);
-    } finally {
-      await conn.end();
-    }
-  } finally {
+    // Sem listener, um 'error' fatal (túnel caiu ocioso) derruba o processo; a próxima query já falha sozinha.
+    conn.on("error", (erro) => console.error(`▶ Conexão MySQL Nerus: ${erro.message}`));
+    return {
+      conn,
+      fechar: async () => {
+        await conn.end().catch(() => undefined);
+        ssh.end();
+      },
+    };
+  } catch (erro) {
     ssh.end();
+    throw erro;
+  }
+}
+
+// Sessão = um túnel SSH + conexão MySQL reaproveitados por todas as queries dentro de `fn` (ex.: um /ciclo inteiro).
+// Aberta na 1ª query; se falhar, as demais falham na hora com o mesmo erro (sem repetir o timeout de 20 s por NF).
+const sessao = new AsyncLocalStorage<{ aberta?: Promise<Aberta> }>();
+
+export async function comSessaoNerus<T>(fn: () => Promise<T>): Promise<T> {
+  const s: { aberta?: Promise<Aberta> } = {};
+  try {
+    return await sessao.run(s, fn);
+  } finally {
+    await s.aberta?.then((a) => a.fechar(), () => undefined);
   }
 }
 
@@ -67,8 +90,14 @@ export async function queryNerus<T extends Linha = Linha>(
   sql: string,
   params: Array<string | number | null> = [],
 ): Promise<T[]> {
-  return comMysqlNerus(async (conn) => {
-    const [rows] = await conn.execute(sql, params);
+  const s = sessao.getStore();
+  let a: Aberta;
+  if (s) a = await (s.aberta ??= abrirMysqlNerus());
+  else a = await abrirMysqlNerus();
+  try {
+    const [rows] = await a.conn.execute({ sql, timeout: QUERY_TIMEOUT_MS }, params);
     return (Array.isArray(rows) ? rows : []) as T[];
-  });
+  } finally {
+    if (!s) await a.fechar();
+  }
 }

@@ -1,129 +1,61 @@
-# n8n + PostgreSQL + monitor SFTP NF-e
-# Uso: docker compose up -d --build
-# UI:  http://localhost:5678
-# Monitor: POST http://localhost:8081/executar
+# Monitor NF-e Mercado Livre × SFTP — o projeto inteiro num compose só.
 #
-# Máquina:   docker compose up -d
-#            http://localhost:5678
+#   Servidor (imagens prontas do GHCR, publicadas pelo CI a cada merge na main):
+#     docker compose pull && docker compose up -d      baixa a versão MONITOR_VERSAO e sobe
+#   Desenvolvimento (compila do código desta pasta):
+#     docker compose up -d --build
+#   docker compose logs -f            acompanha tudo (ou: logs -f api | painel | proxy)
 #
-# Servidor:  ajuste o .env (HTTPS + domínio) e, se for usar Traefik:
-#            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Serviços e portas:
+#   api     backend (API, agenda do ciclo, avisos)    127.0.0.1:${API_PORTA:-8081}
+#   painel  frontend (painel e histórico)             127.0.0.1:${PAINEL_PORTA:-8080}
+#   proxy   HTTPS (Caddy) — um DNS por serviço        :80 e :443
+#           https://$PAINEL_HOST → painel   ·   https://$API_HOST → api
 #
-# Pare o `npx n8n` (porta 5678) antes de subir.
+# Local, os padrões são seguros (agenda em SOMBRA, contingência off, *.localhost).
+# No servidor, o .env define MODO_AGENDA=ativo, CONTINGENCIA=on, PAINEL_HOST e API_HOST. Ver docs/deploy.md.
 
-name: n8n
+name: monitor-nfe
+
+x-logs: &logs
+  driver: json-file
+  options:
+    max-size: "10m" # rotação: o docker compose logs não enche o disco do servidor
+    max-file: "5"
 
 services:
-  postgres:
-    image: postgres:16
-    container_name: n8n-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_NON_ROOT_USER: ${POSTGRES_NON_ROOT_USER}
-      POSTGRES_NON_ROOT_PASSWORD: ${POSTGRES_NON_ROOT_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    attach: false
-    command:
-      - postgres
-      - -c
-      - log_min_messages=fatal
-      - -c
-      - log_checkpoints=off
-      - -c
-      - log_connections=off
-      - -c
-      - log_disconnections=off
-    networks:
-      - n8n
-
-  n8n:
-    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
-    container_name: n8n
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:5678:5678"
-    environment:
-      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
-      TZ: ${TZ}
-
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-
-      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-error}
-      N8N_LOG_OUTPUT: console
-      CODE_ENABLE_STDOUT: "true"
-      NO_COLOR: "1"
-      NODE_NO_WARNINGS: "1"
-      N8N_DIAGNOSTICS_ENABLED: "false"
-      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
-      N8N_HIRING_BANNER_ENABLED: "false"
-      N8N_TEMPLATES_ENABLED: "false"
-      N8N_PERSONALIZATION_ENABLED: "false"
-
-      N8N_HOST: ${N8N_HOST}
-      N8N_PORT: 5678
-      N8N_PROTOCOL: ${N8N_PROTOCOL}
-      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL}
-      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL}
-      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE}
-      N8N_PROXY_HOPS: ${N8N_PROXY_HOPS:-0}
-
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
-      DB_POSTGRESDB_USER: ${POSTGRES_NON_ROOT_USER}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_NON_ROOT_PASSWORD}
-      DB_POSTGRESDB_SCHEMA: n8n
-
-      EXECUTIONS_DATA_PRUNE: "true"
-      EXECUTIONS_DATA_MAX_AGE: 336
-      N8N_RESTRICT_FILE_ACCESS_TO: /files
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
-
-      GOOGLE_CHAT_WEBHOOK_URL: ${GOOGLE_CHAT_WEBHOOK_URL:-}
-      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-}
-      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
-      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
-      WHATSAPP_TO: ${WHATSAPP_TO:-}
-
-      MONITOR_HTTP_TOKEN: ${MONITOR_HTTP_TOKEN:-}
-
-      ML_ACCESS_TOKEN: ${ML_ACCESS_TOKEN:-}
-      ML_REFRESH_TOKEN: ${ML_REFRESH_TOKEN:-}
-      ML_CLIENT_ID: ${ML_CLIENT_ID:-}
-      ML_CLIENT_SECRET: ${ML_CLIENT_SECRET:-}
-      FAKE_NOTA: ${FAKE_NOTA:-}
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./local-files:/files
-      - ./workflows:/files/workflows:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - n8n
-
-  monitor-sftp:
+  # Backend: API + agenda do ciclo + avisos. Sem /painel (o painel é o serviço abaixo).
+  api:
+    image: ${MONITOR_REGISTRO:-ghcr.io/matheus-santos7}/monitor-nfe-api:${MONITOR_VERSAO:-latest}
     build: ./monitoramento
-    container_name: n8n-monitor-sftp
+    container_name: monitor-api
     restart: unless-stopped
     environment:
       CONFIG_PATH: /app/config.yml
       PORT: "8080"
       TZ: ${TZ}
-      MONITOR_HTTP_TOKEN: ${MONITOR_HTTP_TOKEN:-}
+      MONITOR_HTTP_TOKEN: ${MONITOR_HTTP_TOKEN:-} # Bearer para scripts/integrações (API_HOST); nunca na URL
+      # Login do painel: contas por pessoa (npm run senha) e segredo que assina o cookie de sessão
+      PAINEL_USUARIOS: ${PAINEL_USUARIOS:-}
+      SESSAO_SEGREDO: ${SESSAO_SEGREDO:-}
+      PAINEL_HOST: ${PAINEL_HOST:-painel.localhost} # Origin permitida (CSRF)
+      PAINEL_PORTA: ${PAINEL_PORTA:-8080}
       FAKE_NOTA: ${FAKE_NOTA:-}
+      PAINEL_INTERVALO_MIN: ${PAINEL_INTERVALO_MIN:-5}
+      # Padrões seguros. No servidor, o .env define MODO_AGENDA=ativo e CONTINGENCIA=on.
+      CONTINGENCIA: ${CONTINGENCIA:-off}
+      MODO_AGENDA: ${MODO_AGENDA:-sombra} # off | sombra (sem contingência, sem avisos) | ativo
+      AGENDA_CICLO: ${AGENDA_CICLO:-0 8-18 * * 1-5}
+      GOOGLE_CHAT_WEBHOOK_URL: ${GOOGLE_CHAT_WEBHOOK_URL:-}
+      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      WHATSAPP_TO: ${WHATSAPP_TO:-}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
       ML_ACCESS_TOKEN: ${ML_ACCESS_TOKEN:-}
       ML_REFRESH_TOKEN: ${ML_REFRESH_TOKEN:-}
       ML_CLIENT_ID: ${ML_CLIENT_ID:-}
@@ -131,6 +63,7 @@ services:
       ML_USER_ID: ${ML_USER_ID:-}
       ML_APPLICATION_ID: ${ML_CLIENT_ID:-}
       ML_TETO_DIAS: ${ML_TETO_DIAS:-1}
+      ML_TETO_CACHE_MIN: ${ML_TETO_CACHE_MIN:-5}
       ML_TOKENS_PATH: /app/data/ml-tokens.json
       ML_ENV_PATH: /app/.env.host
       NERUS_TENANT_ID: ${NERUS_TENANT_ID:-}
@@ -152,7 +85,7 @@ services:
       - ./.env:/app/.env.host
       - ${NERUS_SSH_KEY_HOST_PATH:-./secrets/bastion.pem}:/run/secrets/bastion.pem:ro
     ports:
-      - "127.0.0.1:8081:8080"
+      - "127.0.0.1:${API_PORTA:-8081}:8080" # direto no servidor (curl/túnel); de fora, só via proxy HTTPS
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -168,12 +101,49 @@ services:
       retries: 12
       start_period: 15s
     networks:
-      - n8n
+      - monitor
+    logging: *logs
+
+  # Frontend: painel estático (painel/index.html) + repasse das rotas do painel para a api.
+  painel:
+    image: ${MONITOR_REGISTRO:-ghcr.io/matheus-santos7}/monitor-nfe-painel:${MONITOR_VERSAO:-latest}
+    build: ./painel # index.html + nginx.conf vão dentro da imagem
+    container_name: monitor-painel
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:${PAINEL_PORTA:-8080}:80"
+    networks:
+      - monitor
+    logging: *logs
+
+  # HTTPS na frente dos dois: certificado automático (Let's Encrypt) para os nomes do .env.
+  proxy:
+    image: ${MONITOR_REGISTRO:-ghcr.io/matheus-santos7}/monitor-nfe-proxy:${MONITOR_VERSAO:-latest}
+    build: ./proxy # Caddyfile vai dentro da imagem
+    container_name: monitor-proxy
+    restart: unless-stopped
+    depends_on:
+      - api
+      - painel
+    environment:
+      PAINEL_HOST: ${PAINEL_HOST:-painel.localhost}
+      API_HOST: ${API_HOST:-api.localhost}
+    volumes:
+      - caddy_data:/data # certificados: não apague
+      - caddy_config:/config
+    ports:
+      - "${HTTP_PORTA:-80}:80"
+      - "${HTTPS_PORTA:-443}:443"
+    networks:
+      - monitor
+    logging: *logs
 
 volumes:
-  postgres_data:
-  n8n_data:
+  caddy_data:
+  caddy_config:
 
 networks:
-  n8n:
+  monitor:
     driver: bridge

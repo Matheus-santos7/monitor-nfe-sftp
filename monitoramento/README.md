@@ -1,21 +1,15 @@
-# Monitor SFTP NF-e
+# monitor-sftp
 
-Serviço Node que o n8n chama (o n8n é o relógio). A documentação do **projeto** (stack, fluxo, API, ADRs) está na [raiz](../README.md) e em [docs/](../docs/).
+O serviço Node 22 + TypeScript do monitor NF-e: agenda, regra, avisos e painel, tudo aqui.
 
-## Configuração
-
-```bash
-cp config.example.yml config.yml
-```
-
-`config.yml` não vai para o git.
-
-## Testes
+- **Onde fica cada coisa e como testar:** [docs/monitor.md](../docs/monitor.md)
+- **Contrato HTTP:** [docs/api.md](../docs/api.md)
+- **Visão geral e como rodar (via Docker Compose, na raiz):** [README da raiz](../README.md)
 
 ```bash
-npm test
+cp -n config.example.yml config.yml   # fora do Git
+npm ci
+npm run check                      # typecheck + testes (o mesmo que o CI)
 ```
 
-## HTTP
-
-O container escuta `8080`. No host: `http://127.0.0.1:8081`. Contrato: [docs/api.md](../docs/api.md).
+O container escuta na porta `8080`. No host, o endereço é `http://127.0.0.1:8081`.
