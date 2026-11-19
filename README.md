@@ -52,31 +52,68 @@ Caddyfile             proxy HTTPS: um DNS por serviço
 
 ## Rodar localmente
 
-**Pré-requisitos:** Docker com Compose e, para rodar os testes fora do container, Node 22. As credenciais (SFTP, ML, Nerus, chave SSH) vêm do responsável pelo projeto. Elas **nunca** vão para o Git.
+**Pré-requisitos:** Docker Desktop (ou Docker Engine) com Compose v2 e, para rodar os testes fora do container, Node 22. As portas **8080, 8081, 80 e 443** precisam estar livres. As credenciais (SFTP, ML, Nerus, chave SSH) vêm do responsável pelo projeto e **nunca** vão para o Git.
 
 > ⚠️ **Antes do primeiro `up`:**
 > - Não defina `CONTINGENCIA` nem `MODO_AGENDA` no seu `.env`. Localmente, o padrão é contingência desligada e agenda em **sombra** (roda no horário, mas não renotifica nem envia avisos). Com `CONTINGENCIA=on`, o monitor renotifica o gateway fiscal **de verdade**.
-> - **Nunca** use o `ML_REFRESH_TOKEN` da produção. Ele é de uso único: a primeira renovação na sua máquina derruba a VPS. Deixe vazio (o monitor roda só com o FTP, em "cobertura parcial") ou use um token próprio.
+> - **Nunca** use o `ML_REFRESH_TOKEN` da produção. Ele é de uso único: a primeira renovação na sua máquina derruba o servidor. Deixe vazio (o monitor roda só com o FTP, em "cobertura parcial") ou use um token próprio.
+
+**1. Arquivos de configuração** (os dois ficam fora do Git):
 
 ```bash
-cp .env.example .env                                   # preencha; nunca commite
+cp .env.example .env && chmod 600 .env
 cp monitoramento/config.example.yml monitoramento/config.yml
-# chave SSH do bastion em secrets/bastion.pem (chmod 600), se for diagnosticar no Nerus
-
-docker compose up -d --build
-docker compose logs -f            # os três serviços; Ctrl+C sai sem parar nada
 ```
 
-**Deu certo se** o log da `api` mostra `monitor-sftp pronto :8080`, `Contingência desligada` e `Agenda do ciclo em SOMBRA`, e o painel abre:
+Preencha o `config.yml` (cliente, SFTP, séries) e as credenciais no `.env`. Se for diagnosticar no Nerus, coloque a chave do bastion em `secrets/bastion.pem` e rode `chmod 600 secrets/bastion.pem`. Sem a chave, o diagnóstico falha e o resto funciona.
+
+**2. Segredos do login e da API**, que vão no `.env`:
+
+```bash
+openssl rand -hex 32   # cole em SESSAO_SEGREDO=      (assina o cookie de login)
+openssl rand -hex 32   # cole em MONITOR_HTTP_TOKEN=  (Bearer da API, para scripts)
+```
+
+**3. Subir:**
+
+```bash
+docker compose up -d --build
+docker compose ps                 # api, painel e proxy "running"
+```
+
+**4. Criar a sua conta** (a senha é pedida sem aparecer na tela, com no mínimo 12 caracteres):
+
+```bash
+docker compose exec api node dist/senha.js seu.nome operacao
+```
+
+Copie a linha impressa para `PAINEL_USUARIOS=` no `.env`. Separe várias contas por vírgula; use `leitura` para quem só acompanha. Depois aplique:
+
+```bash
+docker compose up -d --force-recreate api
+```
+
+**5. Acompanhar os logs:**
+
+```bash
+docker compose logs -f            # os três serviços; Ctrl+C sai sem parar nada
+docker compose logs -f api        # só o backend
+```
+
+**Deu certo se** o log da `api` mostra `Painel: 1 conta(s)`, `Contingência desligada`, `Agenda do ciclo em SOMBRA` e `monitor-sftp pronto :8080`.
+
+**6. Abrir o painel e entrar** com o usuário e a senha do passo 4:
 
 | Serviço | URL |
 |---|---|
-| Painel (frontend) | http://localhost:8080 · ou https://painel.localhost (certificado local). Login com usuário e senha |
-| API (backend) | http://localhost:8081/health · ou https://api.localhost/health |
+| Painel (frontend) | http://localhost:8080 · ou https://painel.localhost (certificado local: o navegador avisa uma vez) |
+| API (backend) | http://localhost:8081/health · ou https://api.localhost/health (só Bearer) |
 
-No painel, o botão **Executar agora** roda o ciclo inteiro em sombra, e os avisos aparecem só no log.
+Com a agenda em sombra, o botão **Executar agora** roda o ciclo inteiro sem renotificar o gateway nem enviar avisos. O resultado aparece só no log e no painel.
 
-Testes: `cd monitoramento && npm run check`, com typecheck e testes, o mesmo que o CI roda.
+**Para parar:** `docker compose down`. Os dados em `monitoramento/data/` e o certificado local continuam. **Para atualizar** depois de um `git pull`: `docker compose up -d --build`.
+
+**Testes**, fora do container: `cd monitoramento && npm ci && npm run check`. São typecheck e testes, o mesmo que o CI roda.
 
 ## Mudanças comuns
 
