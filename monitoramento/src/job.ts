@@ -4,6 +4,7 @@ import { listarArquivosFtp } from "./sftp.js";
 import { credenciaisMlConfiguradas } from "./ml-auth.js";
 import { buscarTetosPorSerie } from "./ml-invoices.js";
 import type { AppConfig, ResultadoSerie, TetoMl } from "./types.js";
+import { avisosBanco, bancoChecagem, bancoEventos } from "./db.js";
 import { diaDe, diaVazio, lerDia, salvarDia, ultimoDiaGravado, type DiaHistorico, type EventoHistorico } from "./historico.js";
 
 export type ResultadoJob = {
@@ -47,8 +48,11 @@ export function jobOcupado(): boolean {
 }
 
 export function statusPainel(): StatusPainel {
-  return painel;
+  const banco = avisosBanco(); // banco fora: aviso no painel (o histórico JSON continua)
+  return banco.length ? { ...painel, avisos: [...painel.avisos, ...banco] } : painel;
 }
+
+let clienteAtual = "?";
 
 /** Atualiza o painel e o histórico do dia; mantém a hora do primeiro aparecimento de cada furo. */
 export function registrarChecagem(
@@ -59,6 +63,9 @@ export function registrarChecagem(
   const em = agora.toISOString();
   const d = diaAtual(agora);
   const evento = (e: Omit<EventoHistorico, "em">) => d.eventos.push({ em, ...e });
+  const antes = d.eventos.length;
+  const espelhar = (ausentes: number) =>
+    bancoChecagem({ em, cliente: clienteAtual, status: painel.status, duracaoMs: painel.duracaoMs, notasAusentes: ausentes, avisos: painel.avisos, eventos: d.eventos.slice(antes) });
   painel.checadoEm = em;
   painel.duracaoMs = agora.getTime() - inicio;
   d.checagens.total++;
@@ -72,6 +79,7 @@ export function registrarChecagem(
     painel.erro = saida.erro;
     d.checagens.erro++;
     salvar(d);
+    espelhar(painel.resultado?.notasAusentes.length ?? 0);
     return;
   }
 
@@ -96,7 +104,9 @@ export function registrarChecagem(
   painel.status = !saida.resultado.integracaoOk ? "alerta" : saida.avisos.length ? "erro" : "ok";
   d.checagens[painel.status === "ok" ? "ok" : painel.status === "alerta" ? "alerta" : "erro"]++;
   d.abertos = painel.ausentesDesde;
+  clienteAtual = saida.resultado.identificador || clienteAtual;
   salvar(d);
+  espelhar(saida.resultado.notasAusentes.length);
 }
 
 /** Evento avulso no histórico do dia (ex.: aviso que nenhum canal entregou). */
@@ -104,6 +114,7 @@ export function registrarEventoAviso(texto: string, agora = new Date()): void {
   const d = diaAtual(agora);
   d.eventos.push({ em: agora.toISOString(), tipo: "aviso", texto });
   salvar(d);
+  bancoEventos(clienteAtual, d.eventos.slice(-1));
 }
 
 let hoje: DiaHistorico | null = null;

@@ -47,6 +47,11 @@ services:
       MODO_AGENDA: ${MODO_AGENDA:-sombra} # off | sombra (sem contingência, sem avisos) | ativo
       AGENDA_CICLO: ${AGENDA_CICLO:-0 8-18 * * 1-5}
       RESUMO_CRON: ${RESUMO_CRON:-0 10,18 * * 1-5}
+      DB_HOST: ${DB_HOST:-}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER:-}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+      DB_NAME: ${DB_NAME:-sqlmonitoramento}
       TOLERANCIA_MIN: ${TOLERANCIA_MIN:-20} # nota ausente há menos que isso = em trânsito (sem alerta)
       GOOGLE_CHAT_WEBHOOK_URL: ${GOOGLE_CHAT_WEBHOOK_URL:-}
       WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
