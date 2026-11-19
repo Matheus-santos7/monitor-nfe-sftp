@@ -13,6 +13,8 @@ export type ResultadoJob = {
   notasAusentes: { numero: number; serie: number }[];
   tetoPeriodo?: { start: string; end: string } | null;
   avisos: string[];
+  /** "numero/serie" → ISO da 1ª checagem em que a nota faltou (relógio da tolerância). */
+  ausentesDesde?: Record<string, string>;
 };
 
 export type StatusPainel = {
@@ -213,7 +215,7 @@ async function rodarJob(config?: AppConfig): Promise<ResultadoJob> {
       avisos,
     };
     registrarChecagem(inicio, { resultado, avisos });
-    return resultado;
+    return { ...resultado, ausentesDesde: Object.fromEntries(ausentesDesde) };
   } catch (erro) {
     registrarChecagem(inicio, { erro: erro instanceof Error ? erro.message : String(erro) });
     throw erro;

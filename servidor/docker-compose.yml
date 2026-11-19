@@ -52,6 +52,7 @@ services:
       MODO_AGENDA: ativo # off (pausado) | sombra (sem contingência e sem avisos) | ativo
       CONTINGENCIA: "on" # "on" renotifica o gateway fiscal DE VERDADE; "off" para pausar só a contingência
       AGENDA_CICLO: "0 8-18 * * 1-5" # cron, fuso America/Sao_Paulo
+      TOLERANCIA_MIN: "20" # nota ausente há menos que isso = em trânsito (atraso de integração): sem alerta nem contingência
       PAINEL_INTERVALO_MIN: "5"
       FAKE_NOTA: "" # vazio em produção
 

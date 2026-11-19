@@ -6,12 +6,16 @@ import type { RelatorioDiagnostico } from "./diagnostico.js";
 import { relatorioNota } from "./relatorio.js";
 
 type Nota = { numero: number; serie: number };
-const job = (notas: Nota[], avisos: string[] = [], semXml = false): ResultadoJob => ({
+// por padrão as notas estão ausentes há 1 h (já são furo); `desdeMin` controla a idade para testar a tolerância
+const job = (notas: Nota[], avisos: string[] = [], semXml = false, desdeMin: Record<string, number> = {}, agora = Date.now()): ResultadoJob => ({
   identificador: "Cliente X",
   series: [{ serie: 2, cnpj: "", total: 9, min: 100, max: 110, pulos: [], totalAusentes: semXml ? -1 : notas.length, tetoMl: 110 }],
   integracaoOk: notas.length === 0 && !semXml,
   notasAusentes: notas,
   avisos,
+  ausentesDesde: Object.fromEntries(
+    notas.map((n) => [`${n.numero}/${n.serie}`, new Date(agora - (desdeMin[`${n.numero}/${n.serie}`] ?? 60) * 60_000).toISOString()]),
+  ),
 });
 const diag = (n: Nota, proximaAcao: RelatorioDiagnostico["proximaAcao"]): RelatorioDiagnostico => ({
   referencia: `${n.numero}/${n.serie}`, invoiceId: `inv-${n.numero}`, chave: null, numero: n.numero, serie: n.serie,
@@ -137,4 +141,49 @@ test("contingência só liga com CONTINGENCIA=on explícito; vazio ou ausente = 
     if (antes === undefined) delete process.env.CONTINGENCIA;
     else process.env.CONTINGENCIA = antes;
   }
+});
+
+test("tolerância: ausentes há < 20 min ficam em trânsito — sem diagnóstico, sem contingência, sem aviso no Chat", async () => {
+  const agora = Date.now();
+  const notas = [{ numero: 201, serie: 2 }, { numero: 202, serie: 2 }];
+  const d = deps({ checar: async () => job(notas, [], false, { "201/2": 5, "202/2": 19 }, agora), acoes: { 201: "contigencia", 202: "contigencia" } });
+  const r = await rodarCiclo(d, "1", new Date(agora));
+  assert.equal(r.status, "em_transito");
+  assert.deepEqual(r.lote, []);
+  assert.deepEqual(r.mensagens, []);
+  assert.deepEqual(d.contingencias, [], "nada diagnosticado: nenhuma contingência");
+  assert.deepEqual(r.emTransito.map((n) => [n.numero, n.haMin]), [[201, 5], [202, 19]]);
+  assert.match(r.avisos.join(" "), /2 nota\(s\) em trânsito há até 19 min \(viram furo com 20 min\)/);
+  assert.notEqual(r.status, "ok", "em trânsito nunca é verde");
+});
+
+test("tolerância: fronteira — 19 min em trânsito, 20 e 21 min já são furo (só os furos vão ao diagnóstico)", async () => {
+  const agora = Date.now();
+  const notas = [{ numero: 301, serie: 2 }, { numero: 302, serie: 2 }, { numero: 303, serie: 2 }];
+  const d = deps({ checar: async () => job(notas, [], false, { "301/2": 19, "302/2": 20, "303/2": 21 }, agora), acoes: { 302: "esperar_entrega", 303: "esperar_entrega" } });
+  const r = await rodarCiclo(d, "1", new Date(agora));
+  assert.equal(r.status, "alerta");
+  assert.deepEqual(r.lote.map((i) => i.numero), [302, 303]);
+  assert.deepEqual(r.emTransito.map((n) => n.numero), [301]);
+});
+
+test("tolerância: nota nunca vista antes conta a partir de agora (em trânsito, não some)", async () => {
+  const agora = Date.now();
+  const base = job([{ numero: 401, serie: 2 }], [], false, {}, agora);
+  const r = await rodarCiclo(deps({ checar: async () => ({ ...base, ausentesDesde: {} }) }), "1", new Date(agora));
+  assert.equal(r.status, "em_transito");
+  assert.deepEqual(r.emTransito.map((n) => [n.numero, n.haMin]), [[401, 0]]);
+});
+
+test("tolerância: último ciclo do dia (ignorarTolerancia) trata nota de 5 min como furo", async () => {
+  const agora = Date.now();
+  const d = deps({ checar: async () => job([{ numero: 501, serie: 2 }], [], false, { "501/2": 5 }, agora), acoes: { 501: "esperar_entrega" } });
+  const r = await rodarCiclo(d, "1", new Date(agora), { ignorarTolerancia: true });
+  assert.equal(r.status, "alerta");
+  assert.deepEqual(r.lote.map((i) => i.numero), [501]);
+});
+
+test("tolerância: série sem XML continua alerta (não é 'em trânsito')", async () => {
+  const r = await rodarCiclo(deps({ checar: async () => job([], [], true) }), "1");
+  assert.equal(r.status, "alerta");
 });

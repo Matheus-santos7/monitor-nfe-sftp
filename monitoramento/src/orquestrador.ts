@@ -15,7 +15,7 @@ export function modoAgenda(env: Record<string, string | undefined> = process.env
 }
 
 export type DepsOrquestrador = {
-  ciclo: (execucao: string, opcoes: { contingencia: boolean }) => Promise<ResultadoCiclo>;
+  ciclo: (execucao: string, opcoes: { contingencia: boolean; ignorarTolerancia: boolean }) => Promise<ResultadoCiclo>;
   conferir: (entrada: { notas: ResultadoCiclo["notasAusentes"]; lote: ResultadoCiclo["lote"]; execucao: string }) => Promise<ResultadoConferencia>;
   enviar: (m: Mensagem) => Promise<ResultadoEnvio>;
   esperar: (ms: number) => Promise<void>;
@@ -52,6 +52,8 @@ export type EstadoCiclo = {
 
 const ESPERA_MS: Record<ResultadoCiclo["espera"], number> = { "10min": 600_000, "2min": 120_000, nenhuma: 0 };
 const RECONFERIR_MS = 120_000;
+const HORA_ULTIMO_CICLO = 18;
+const horaSaoPaulo = (d: Date) => Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Sao_Paulo", hour: "2-digit", hourCycle: "h23" }).format(d));
 
 const estado: Omit<EstadoCiclo, "modo" | "agenda" | "proximo"> = {
   emAndamento: false,
@@ -119,7 +121,9 @@ export async function executarCicloCompleto(
   let atual = "ciclo";
   try {
     atual = etapa("ciclo");
-    const r = await deps.ciclo(execucao, { contingencia: !sombra });
+    // último ciclo agendado do dia (18h em São Paulo): ignora a tolerância, para nenhum furo esperar até amanhã
+    const ignorarTolerancia = origem === "agenda" && horaSaoPaulo(deps.agora()) >= HORA_ULTIMO_CICLO;
+    const r = await deps.ciclo(execucao, { contingencia: !sombra, ignorarTolerancia });
     status = r.status;
     mensagens = r.mensagens;
     if (r.lote.length) {
