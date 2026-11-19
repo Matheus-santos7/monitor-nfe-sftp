@@ -82,7 +82,7 @@ Um evento só é gravado quando o estado **muda**. Uma checagem igual à anterio
 | 🔄 Voltou | A checagem voltou a funcionar |
 | ℹ️ Aviso | Um aviso novo apareceu |
 
-### Séries
+### Séries (dentro de Operação)
 
 Por série: XMLs no FTP, faixa no FTP (min–max), teto do ML, se a última do ML está no FTP, e quantas faltam.
 
