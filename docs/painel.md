@@ -54,7 +54,7 @@ Aparecem colados embaixo da faixa de status (somem quando não há nenhum). Moti
 
 ### Notas ausentes no FTP
 
-NF/série, **situação** (⏳ em trânsito ou ⚠️ furo), **ausente desde** (a primeira checagem que viu a nota faltar) e **há quanto tempo**. A partir da tolerância (`TOLERANCIA_MIN`, padrão 20 min) a nota vira **furo** e a linha fica vermelha. 10 linhas por página.
+NF/série, **situação** (⏳ em trânsito ou ⚠️ furo), **desde** (a primeira checagem que viu a nota faltar; só a hora se for hoje, dia/mês + hora se for de outro dia) e **há quanto tempo**. A partir da tolerância (`TOLERANCIA_MIN`, padrão 20 min) a nota vira **furo** e a linha fica vermelha. 10 linhas por página.
 
 ### Saúde do dia
 
