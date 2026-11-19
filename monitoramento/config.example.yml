@@ -1,5 +1,5 @@
 # Copie para config.yml e preencha. Não commite senhas.
-#   cp config.example.yml config.yml
+#   cp -n config.example.yml config.yml
 
 cliente:
   nome: Loja Exemplo

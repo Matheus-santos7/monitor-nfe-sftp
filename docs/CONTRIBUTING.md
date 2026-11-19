@@ -6,7 +6,7 @@ Guia para quem vai mudar o código. Visão geral e como rodar: [README](../READM
 
 - Docker com Compose v2: sobe o projeto inteiro (`docker compose up -d --build`).
 - Node 22: para rodar os testes e o typecheck fora do container.
-- `cp .env.example .env` e `cp monitoramento/config.example.yml monitoramento/config.yml`.
+- `cp -n .env.example .env` e `cp -n monitoramento/config.example.yml monitoramento/config.yml`.
   - **Não** defina `MODO_AGENDA` nem `CONTINGENCIA`: o padrão local é sombra e contingência desligada.
   - **Nunca** use o `ML_REFRESH_TOKEN` da produção.
 

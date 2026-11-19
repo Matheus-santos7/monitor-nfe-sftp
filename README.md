@@ -58,11 +58,11 @@ Caddyfile             proxy HTTPS: um DNS por serviço
 > - Não defina `CONTINGENCIA` nem `MODO_AGENDA` no seu `.env`. Localmente, o padrão é contingência desligada e agenda em **sombra** (roda no horário, mas não renotifica nem envia avisos). Com `CONTINGENCIA=on`, o monitor renotifica o gateway fiscal **de verdade**.
 > - **Nunca** use o `ML_REFRESH_TOKEN` da produção. Ele é de uso único: a primeira renovação na sua máquina derruba o servidor. Deixe vazio (o monitor roda só com o FTP, em "cobertura parcial") ou use um token próprio.
 
-**1. Arquivos de configuração** (os dois ficam fora do Git):
+**1. Arquivos de configuração** (os dois ficam fora do Git). O `-n` não sobrescreve um arquivo que já existe: se você já tem `.env` ou `config.yml`, eles ficam como estão.
 
 ```bash
-cp .env.example .env && chmod 600 .env
-cp monitoramento/config.example.yml monitoramento/config.yml
+cp -n .env.example .env && chmod 600 .env
+cp -n monitoramento/config.example.yml monitoramento/config.yml
 ```
 
 Preencha o `config.yml` (cliente, SFTP, séries) e as credenciais no `.env`. Se for diagnosticar no Nerus, coloque a chave do bastion em `secrets/bastion.pem` e rode `chmod 600 secrets/bastion.pem`. Sem a chave, o diagnóstico falha e o resto funciona.

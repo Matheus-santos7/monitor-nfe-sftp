@@ -7,7 +7,7 @@ O serviço Node 22 + TypeScript do monitor NF-e: agenda, regra, avisos e painel,
 - **Visão geral e como rodar (via Docker Compose, na raiz):** [README da raiz](../README.md)
 
 ```bash
-cp config.example.yml config.yml   # fora do Git
+cp -n config.example.yml config.yml   # fora do Git
 npm ci
 npm run check                      # typecheck + testes (o mesmo que o CI)
 ```

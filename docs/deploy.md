@@ -54,8 +54,8 @@ Ninguém recebe token no link. Cada pessoa tem a própria conta, criada com `nod
 ```bash
 ssh <servidor>
 git clone <repositório> monitor-nfe && cd monitor-nfe
-cp .env.example .env && chmod 600 .env
-cp monitoramento/config.example.yml monitoramento/config.yml
+cp -n .env.example .env && chmod 600 .env
+cp -n monitoramento/config.example.yml monitoramento/config.yml
 mkdir -p secrets && cp <bastion.pem> secrets/bastion.pem && chmod 600 secrets/bastion.pem
 ```
 
