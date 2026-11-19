@@ -9,7 +9,7 @@ const item: ItemLote = { referencia: "10/2", numero: 10, serie: 2, invoiceId: "i
 const m = (assunto: string): Mensagem => ({ assunto, mensagem: assunto });
 
 function ciclo(extra: Partial<ResultadoCiclo>): ResultadoCiclo {
-  return { status: "ok", identificador: "x", avisos: [], notasAusentes: [], lote: [], espera: "nenhuma", mensagens: [m("resumo")], ...extra };
+  return { status: "ok", identificador: "x", avisos: [], notasAusentes: [], lote: [], emTransito: [], espera: "nenhuma", mensagens: [m("resumo")], ...extra };
 }
 function conf(aindaFaltam: boolean, assunto: string): ResultadoConferencia {
   return { aindaFaltam, faltando: aindaFaltam ? [nota] : [], noFtp: aindaFaltam ? 0 : 1, total: 1, mensagens: [m(assunto)] };
@@ -97,4 +97,13 @@ test("modoAgenda: só 'sombra' e 'ativo' ligam; o resto é off", () => {
   assert.equal(modoAgenda({ MODO_AGENDA: "ATIVO" }), "ativo");
   assert.equal(modoAgenda({ MODO_AGENDA: "sombra" }), "sombra");
   assert.equal(modoAgenda({ MODO_AGENDA: "on" }), "off");
+});
+
+test("último ciclo agendado do dia (18h em São Paulo) pede para ignorar a tolerância; manual e outros horários não", async () => {
+  const pedidos: boolean[] = [];
+  const mk = (iso: string) => deps({ ciclo: async (_e, o) => (pedidos.push(o.ignorarTolerancia), ciclo({})), agora: () => new Date(iso) });
+  await executarCicloCompleto(mk("2026-11-19T21:00:00Z").d, { execucao: "a", origem: "agenda", sombra: false }); // 18h SP
+  await executarCicloCompleto(mk("2026-11-19T20:00:00Z").d, { execucao: "b", origem: "agenda", sombra: false }); // 17h SP
+  await executarCicloCompleto(mk("2026-11-19T21:00:00Z").d, { execucao: "c", origem: "manual", sombra: false }); // manual 18h
+  assert.deepEqual(pedidos, [true, false, false]);
 });

@@ -4,7 +4,7 @@ import type { AppConfig } from "./types.js";
 import { executarJob, type ResultadoJob } from "./job.js";
 import { localizarInvoicePorNf, validarUsuarioMl } from "./ml-invoices.js";
 import { diagnosticarNota } from "./diagnostico.js";
-import { parseFakeNota } from "./gaps.js";
+import { parseFakeNota, separarEmTransito, toleranciaMin } from "./gaps.js";
 import { comSessaoNerus } from "./nerus-db.js";
 import {
   decidirEsperaLote,
@@ -45,12 +45,18 @@ export function contingenciaLigada(): boolean {
 }
 
 export type ResultadoCiclo = {
-  /** ok = tudo integrado e checagem completa; degradado = sem furo visível, mas checagem cega (ex.: sem teto ML); alerta = furo. */
-  status: "ok" | "degradado" | "alerta";
+  /**
+   * ok = tudo integrado e checagem completa; degradado = sem furo visível, mas checagem cega (ex.: sem teto ML);
+   * em_transito = só há notas ausentes há menos que a tolerância (atraso normal de integração; sem alerta ainda);
+   * alerta = furo (ausente há ≥ tolerância) ou série sem XML.
+   */
+  status: "ok" | "degradado" | "em_transito" | "alerta";
   identificador: string;
   avisos: string[];
   notasAusentes: Nota[];
   lote: ItemLote[];
+  /** Ausentes há menos que a tolerância: não diagnosticadas, sem contingência, sem aviso no Chat. */
+  emTransito: { numero: number; serie: number; haMin: number }[];
   espera: "10min" | "2min" | "nenhuma";
   /** Avisos para enviar já neste passo (resumo ok/degradado ou série sem XML). Vazio quando há lote a conferir. */
   mensagens: Mensagem[];
@@ -61,29 +67,45 @@ export async function rodarCiclo(
   deps: DepsCiclo,
   execucao: string,
   agora = new Date(),
-  opcoes: { contingencia?: boolean } = {},
+  opcoes: { contingencia?: boolean; ignorarTolerancia?: boolean } = {},
 ): Promise<ResultadoCiclo> {
   const contingencia = (opcoes.contingencia ?? true) && contingenciaLigada();
   const r = await deps.checar();
   const status = !r.integracaoOk ? "alerta" : r.avisos.length ? "degradado" : "ok";
-  const base = { status, identificador: r.identificador, avisos: r.avisos, notasAusentes: r.notasAusentes } as const;
-  const fim = (extra: Pick<ResultadoCiclo, "lote" | "espera" | "mensagens">): ResultadoCiclo => ({ ...base, ...extra });
+
+  // Tolerância: nota ausente há pouco tempo ainda pode chegar (atraso de integração). Só vira furo — diagnóstico,
+  // contingência e aviso — depois de TOLERANCIA_MIN. O último ciclo do dia ignora a tolerância (não deixa furo
+  // escondido até o dia seguinte).
+  const tol = opcoes.ignorarTolerancia ? 0 : toleranciaMin();
+  const { furos, emTransito } = separarEmTransito(r.notasAusentes, r.ausentesDesde ?? {}, agora, tol);
+  const avisos = emTransito.length
+    ? [...r.avisos, `${emTransito.length} nota(s) em trânsito há até ${Math.max(...emTransito.map((n) => n.haMin))} min (viram furo com ${tol} min)`]
+    : r.avisos;
+  const base = { identificador: r.identificador, avisos, notasAusentes: r.notasAusentes, emTransito } as const;
+  const fim = (st: ResultadoCiclo["status"], extra: Pick<ResultadoCiclo, "lote" | "espera" | "mensagens">): ResultadoCiclo => ({
+    ...base,
+    status: st,
+    ...extra,
+  });
+  if (status === "alerta" && r.notasAusentes.length && !furos.length) {
+    return fim("em_transito", { lote: [], espera: "nenhuma", mensagens: [] });
+  }
 
   if (status !== "alerta") {
     const resumo = mensagemResumo({ ...r, fake: Boolean(parseFakeNota(process.env.FAKE_NOTA)), horario: horarioSaoPaulo(agora) });
-    return fim({ lote: [], espera: "nenhuma", mensagens: [resumo] });
+    return fim(status, { lote: [], espera: "nenhuma", mensagens: [resumo] });
   }
 
   const me = await deps.validarMl(); // falha aqui = token ML inválido → o ciclo falha e quem chamou avisa (aviso de falha)
   if (!r.notasAusentes.length) {
-    return fim({ lote: [], espera: "nenhuma", mensagens: [mensagemSerieSemXml(r.identificador, execucao)] });
+    return fim(status, { lote: [], espera: "nenhuma", mensagens: [mensagemSerieSemXml(r.identificador, execucao)] });
   }
 
   const lote: ItemLote[] = [];
   await comSessaoNerus(async () => {
-    for (const nota of r.notasAusentes) lote.push(await diagnosticarItem(deps, nota, String(me.id), execucao, contingencia));
+    for (const nota of furos) lote.push(await diagnosticarItem(deps, nota, String(me.id), execucao, contingencia));
   });
-  return fim({ lote, espera: decidirEsperaLote(lote.map((i) => i.proximaAcao)), mensagens: [] });
+  return fim(status, { lote, espera: decidirEsperaLote(lote.map((i) => i.proximaAcao)), mensagens: [] });
 }
 
 async function diagnosticarItem(deps: DepsCiclo, nota: Nota, mlUserId: string, execucao: string, contingencia: boolean): Promise<ItemLote> {

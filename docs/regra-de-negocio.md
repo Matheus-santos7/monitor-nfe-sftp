@@ -33,9 +33,25 @@ A agenda do monitor roda o ciclo seg–sex, de hora em hora, das 8h às 18h (`AG
 |---|---|---|
 | `ok` | Sem furo, com todas as séries com XML e sem avisos | Resumo "100% OK" |
 | `degradado` | Sem furo visível, mas com algum aviso (ex.: sem teto do ML) | "Monitoramento com cobertura parcial" e o motivo |
-| `alerta` | Há furo ou série sem XML | Diagnóstico de cada NF (seção 3) |
+| `em_transito` | Só há notas ausentes há menos que a tolerância | Nada ainda (seção 2b) |
+| `alerta` | Há furo (ausente há ≥ tolerância) ou série sem XML | Diagnóstico de cada NF (seção 3) |
 
 No painel, o `degradado` aparece como `erro`, com o texto "Checagem incompleta — veja os avisos". O nome muda, mas a regra é a mesma: nunca verde.
+
+## 2b. Tolerância: nota em trânsito
+
+Uma nota que acabou de ser autorizada pode levar alguns minutos para chegar ao FTP (atraso normal de integração). Para não gerar alarme falso, **uma nota ausente há menos de `TOLERANCIA_MIN` (padrão 20 min) fica "em trânsito"**:
+
+- não é diagnosticada, não dispara contingência e não gera aviso no Chat;
+- aparece como aviso no painel ("N nota(s) em trânsito há até X min") e o ciclo fica com o status `em_transito`, que **nunca** é verde;
+- passou da tolerância e continua faltando: vira **furo** e segue a seção 3.
+
+Detalhes:
+
+- **Relógio:** a idade é contada a partir da primeira checagem que viu a nota faltar. A checagem do painel roda a cada 5 min, 24 h, e esse "desde" fica gravado no histórico e sobrevive a um restart. Uma nota nunca vista antes conta a partir de agora: a tolerância pode atrasar o primeiro alerta em até 20 min, mas nunca esconde o furo.
+- **Último ciclo do dia (18h):** ignora a tolerância. Uma nota ausente há 5 min às 18h já é tratada como furo, para nenhum furo esperar até o dia seguinte.
+- **Por que 20 min:** no histórico medido, todos os atrasos normais de integração chegaram ao FTP em até 20 min, e 92% em até 10 min. Ajuste com `TOLERANCIA_MIN` se o padrão mudar.
+- O painel usa o mesmo valor: a linha da nota ausente fica vermelha quando passa da tolerância.
 
 ## 3. Diagnóstico de cada NF ausente
 

@@ -88,7 +88,7 @@
   // Link antigo com ?token=…: não vale mais; limpa a barra de endereço e avisa.
   const linkAntigo = new URLSearchParams(location.search).has("token");
   if (linkAntigo) history.replaceState(null, "", location.pathname);
-  const VELHO_MIN = 15; // furo com mais de 15 min já é atraso real, não latência de envio
+  let VELHO_MIN = 20; // tolerância (TOLERANCIA_MIN do monitor): até aqui é atraso normal de integração; depois, furo
   const $ = (id) => document.getElementById(id);
   const hora = (iso) => new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
   const minDesde = (iso) => Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
@@ -104,6 +104,7 @@
   let ultimo = null;
   function render(s) {
     ultimo = s;
+    if (Number.isFinite(s.toleranciaMin)) VELHO_MIN = s.toleranciaMin;
     $("quem").textContent = s.usuario ? s.usuario + (s.permissao === "operacao" ? " (operação)" : " (leitura)") : "";
     $("cliente").textContent = s.cliente ? s.cliente.nome + " · Conta " + s.cliente.conta : "Painel NF-e SFTP";
     document.title = (s.status === "ok" ? "✅" : s.status === "aguardando" ? "⏳" : "⚠️") + " Painel NF-e SFTP";
@@ -148,7 +149,7 @@
   }
 
   const MODO = { off: "desligada (MODO_AGENDA=off) — monitor pausado", sombra: "SOMBRA — roda sem contingência e sem enviar avisos", ativo: "ativa — o monitor agenda, espera e avisa" };
-  const STATUS_CICLO = { ok: "✅ ok", degradado: "⚠️ cobertura parcial", alerta: "⚠️ alerta (furos)", falhou: "❌ falhou" };
+  const STATUS_CICLO = { ok: "✅ ok", degradado: "⚠️ cobertura parcial", em_transito: "⏳ notas em trânsito (dentro da tolerância)", alerta: "⚠️ alerta (furos)", falhou: "❌ falhou" };
   const hm = (iso) => new Date(iso).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
   function renderCiclo(c) {
     if (!c) return;

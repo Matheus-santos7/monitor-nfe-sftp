@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extrairInutilizacao, partesDaChave } from "./chave.js";
-import { analisarSeries, calcularPulos, expandirNotas, integracaoCompleta, parseFakeNota } from "./gaps.js";
+import { analisarSeries, calcularPulos, expandirNotas, integracaoCompleta, parseFakeNota, separarEmTransito, toleranciaMin } from "./gaps.js";
 
 /** Chave NF-e fictícia (CNPJ 00.000.000/0001-91). */
 function chaveNfe(serie: number, numero: number): string {
@@ -159,4 +159,25 @@ test("integração completa exige todas as séries sem furo e com XML", () => {
     ]),
     false,
   );
+});
+
+test("separarEmTransito: fronteiras 19/20/21 min, nota sem 'desde' e data inválida", () => {
+  const agora = new Date("2026-11-19T15:00:00Z");
+  const desde = (min: number) => new Date(agora.getTime() - min * 60_000).toISOString();
+  const { furos, emTransito } = separarEmTransito(
+    [{ numero: 1, serie: 2 }, { numero: 2, serie: 2 }, { numero: 3, serie: 2 }, { numero: 4, serie: 2 }, { numero: 5, serie: 2 }],
+    { "1/2": desde(19), "2/2": desde(20), "3/2": desde(21), "5/2": "lixo" },
+    agora,
+    20,
+  );
+  assert.deepEqual(furos.map((n) => n.numero), [2, 3]);
+  assert.deepEqual(emTransito.map((n) => [n.numero, n.haMin]), [[1, 19], [4, 0], [5, 0]]);
+});
+
+test("toleranciaMin: padrão 20; aceita 0; valor inválido volta ao padrão", () => {
+  assert.equal(toleranciaMin({}), 20);
+  assert.equal(toleranciaMin({ TOLERANCIA_MIN: "30" }), 30);
+  assert.equal(toleranciaMin({ TOLERANCIA_MIN: "0" }), 0);
+  assert.equal(toleranciaMin({ TOLERANCIA_MIN: "abc" }), 20);
+  assert.equal(toleranciaMin({ TOLERANCIA_MIN: "-5" }), 20);
 });

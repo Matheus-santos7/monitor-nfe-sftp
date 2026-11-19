@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { AppConfig } from "./types.js";
 import { executarJob, jobOcupado, statusPainel } from "./job.js";
 import { diaDe, lerDia, listarDias, resumirDia } from "./historico.js";
+import { toleranciaMin } from "./gaps.js";
 import { depsOrquestradorReais, dispararCiclo, estadoCiclo, type DepsOrquestrador } from "./orquestrador.js";
 import {
   COOKIE_SAIR,
@@ -282,6 +283,7 @@ async function rotear(config: AppConfig, auth: Auth, req: IncomingMessage, res: 
       ok: true,
       ocupado: jobOcupado(),
       intervaloMin: intervaloPainelMin(),
+      toleranciaMin: toleranciaMin(),
       cliente: config.cliente,
       permissao: acesso.papel,
       usuario: acesso.usuario,

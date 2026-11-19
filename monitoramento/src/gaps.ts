@@ -122,6 +122,37 @@ export function expandirNotas(resultados: ResultadoSerie[], limite?: number): {
   return notas;
 }
 
+export const TOLERANCIA_PADRAO_MIN = 20;
+
+/** Minutos de tolerância (TOLERANCIA_MIN, padrão 20): nota ausente há menos que isso está "em trânsito". */
+export function toleranciaMin(env: Record<string, string | undefined> = process.env): number {
+  const v = Number(env.TOLERANCIA_MIN);
+  return Number.isFinite(v) && v >= 0 ? v : TOLERANCIA_PADRAO_MIN;
+}
+
+/**
+ * Separa as notas ausentes em furos (ausentes há ≥ tolerância) e em trânsito (ainda podem chegar: atraso normal
+ * de integração). A idade vem de `ausentesDesde` (1ª checagem que viu a nota faltar). Nota nunca vista antes
+ * conta a partir de agora: a tolerância pode atrasar o primeiro alerta, nunca esconder o furo.
+ */
+export function separarEmTransito(
+  notas: { numero: number; serie: number }[],
+  ausentesDesde: Record<string, string>,
+  agora: Date,
+  tolerancia: number,
+): { furos: { numero: number; serie: number }[]; emTransito: { numero: number; serie: number; haMin: number }[] } {
+  const furos: { numero: number; serie: number }[] = [];
+  const emTransito: { numero: number; serie: number; haMin: number }[] = [];
+  for (const n of notas) {
+    const desde = ausentesDesde[`${n.numero}/${n.serie}`];
+    const ms = desde ? agora.getTime() - new Date(desde).getTime() : 0;
+    const haMin = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 60_000) : 0;
+    if (haMin >= tolerancia) furos.push(n);
+    else emTransito.push({ ...n, haMin });
+  }
+  return { furos, emTransito };
+}
+
 /** true só quando todas as séries monitoradas têm XML e nenhum furo. */
 export function integracaoCompleta(resultados: ResultadoSerie[]): boolean {
   return resultados.length > 0 && resultados.every((r) => r.totalAusentes === 0);
