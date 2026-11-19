@@ -11,6 +11,12 @@
 #  Atualizar:  docker compose pull && docker compose up -d
 #  Voltar uma versão:  troque ":latest" das 3 imagens por ":sha-<commit>" e rode o mesmo comando
 #
+#  Portas no servidor: painel 127.0.0.1:9080 · api 127.0.0.1:9081 (servidor compartilhado com outras aplicações).
+#  HTTPS e os DNS ficam com o proxy que JÁ EXISTE no servidor (nginx, Traefik…): ele encaminha
+#    https://PAINEL_HOST → http://127.0.0.1:9080   e   https://API_HOST → http://127.0.0.1:9081
+#  (configuração pronta em docs/deploy.md, "Servidor compartilhado"). Se NADA usa 80/443 no servidor,
+#  ligue o proxy próprio abaixo apagando a linha "profiles" do serviço proxy.
+#
 #  ⚠️  NUNCA commite este arquivo preenchido (ele tem senhas). O modelo do repositório fica vazio.
 #  ⚠️  Valor com "$" (ex.: uma senha) precisa ser escrito como "$$", senão o compose interpreta.
 #  Requer Docker Compose 2.23.1 ou mais novo (docker compose version).
@@ -22,7 +28,7 @@ name: monitor-nfe
 x-enderecos: &enderecos
   PAINEL_HOST: <monitor.seusetor.com.br>
   API_HOST: <api-monitor.seusetor.com.br>
-  PAINEL_PORTA: "8080"
+  PAINEL_PORTA: "9080"
 
 x-logs: &logs
   driver: json-file
@@ -103,7 +109,7 @@ services:
     volumes:
       - monitor_data:/app/data # histórico, token do ML em uso, trava da contingência
     ports:
-      - "127.0.0.1:8081:8080" # só no próprio servidor (curl/túnel); de fora, via https://API_HOST
+      - "127.0.0.1:9081:8080" # API: só no próprio servidor; o proxy publica em https://API_HOST
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -120,12 +126,14 @@ services:
     restart: unless-stopped
     depends_on: [api]
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:9080:80" # painel: só no próprio servidor; o proxy publica em https://PAINEL_HOST
     networks: [monitor]
     logging: *logs
 
-  # HTTPS (Caddy): https://PAINEL_HOST → painel · https://API_HOST → api (só Bearer)
+  # Proxy próprio (Caddy, HTTPS automático) — DESLIGADO: o servidor já tem proxy nas portas 80/443.
+  # Só ligue (apagando a linha "profiles") se NENHUMA outra aplicação usa 80/443 neste servidor.
   proxy:
+    profiles: [proxy-proprio]
     image: ghcr.io/matheus-santos7/monitor-nfe-proxy:latest
     container_name: monitor-proxy
     restart: unless-stopped

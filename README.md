@@ -151,7 +151,7 @@ Depois de mudar o `.env`: `docker compose up -d --force-recreate api`. Depois de
 
 ## Produção
 
-Siga **[docs/deploy.md](docs/deploy.md)**. No servidor fica **um único arquivo**, o [`servidor/docker-compose.yml`](servidor/docker-compose.yml). Ele guarda as variáveis (sem `.env`), o conteúdo do `config.yml` e o caminho da chave `.pem`. As imagens vêm prontas do GitHub Container Registry, publicadas pelo CI a cada merge na `main`, e os dados ficam num volume do Docker. Para atualizar: `docker compose pull && docker compose up -d`.
+Siga **[docs/deploy.md](docs/deploy.md)**. No servidor fica **um único arquivo**, o [`servidor/docker-compose.yml`](servidor/docker-compose.yml). Ele guarda as variáveis (sem `.env`), o conteúdo do `config.yml` e o caminho da chave `.pem`. As imagens vêm prontas do GitHub Container Registry, publicadas pelo CI a cada merge na `main`, e os dados ficam num volume do Docker. Para atualizar: `docker compose pull && docker compose up -d`. No servidor compartilhado, o painel sobe em `127.0.0.1:9080` e a API em `127.0.0.1:9081`; o proxy que já existe no servidor publica os dois DNS com HTTPS (configuração pronta em [deploy.md, seção 1b](docs/deploy.md#1b-servidor-compartilhado-o-proxy-que-já-existe-faz-o-https)).
 
 ## Problemas comuns
 
