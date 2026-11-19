@@ -36,6 +36,8 @@
   .saudavel { color:var(--ok); } .atencao { color:var(--al); } .critico { color:var(--er); }
   select { font:inherit; padding:5px 8px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--tx); }
   .linhah2 { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .pag { display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-top:8px; font-size:13px; }
+  .pag[hidden] { display:none; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .login { max-width:360px; margin:12vh auto 0; }
   .login label { display:block; margin:12px 0 4px; }
@@ -67,20 +69,22 @@
   <div class="linhah2"><h2>Ciclo de monitoramento</h2><button id="executar" type="button" hidden>Executar agora</button></div>
   <div class="card"><ul id="ciclo"></ul></div>
 
-  <h2>Avisos</h2>
-  <div class="card"><ul id="avisos"></ul></div>
+  <section id="sec-avisos" hidden>
+    <h2>Avisos</h2>
+    <div class="card"><ul id="avisos"></ul></div>
+  </section>
 
   <h2>Notas ausentes no FTP</h2>
-  <div class="card"><table><thead><tr><th>NF / série</th><th>Ausente desde</th><th>Há</th></tr></thead><tbody id="ausentes"></tbody></table></div>
+  <div class="card"><table><thead><tr><th>NF / série</th><th>Ausente desde</th><th>Há</th></tr></thead><tbody id="ausentes"></tbody></table><div class="pag" id="pag-ausentes" hidden></div></div>
 
   <div class="linhah2"><h2>Saúde do dia</h2><label class="mut">Dia <select id="dia"></select></label></div>
   <div class="card"><div class="kpis" id="kpis"></div></div>
 
   <h2>Histórico de avisos do dia</h2>
-  <div class="card"><table><thead><tr><th>Hora</th><th>Evento</th><th>Detalhe</th></tr></thead><tbody id="eventos"></tbody></table></div>
+  <div class="card"><table><thead><tr><th>Hora</th><th>Evento</th><th>Detalhe</th></tr></thead><tbody id="eventos"></tbody></table><div class="pag" id="pag-eventos" hidden></div></div>
 
   <h2>Séries</h2>
-  <div class="card"><table><thead><tr><th>Série</th><th>XMLs no FTP</th><th>FTP</th><th>Teto ML</th><th>Última ML no FTP</th><th>Ausentes</th></tr></thead><tbody id="series"></tbody></table></div>
+  <div class="card"><table><thead><tr><th>Série</th><th>XMLs no FTP</th><th>FTP</th><th>Teto ML</th><th>Última ML no FTP</th><th>Ausentes</th></tr></thead><tbody id="series"></tbody></table><div class="pag" id="pag-series" hidden></div></div>
 </main>
 <script>
   // Sessão em cookie HttpOnly (o JS nunca vê nada secreto). X-Painel: 1 = prova de que a chamada é deste painel (CSRF).
@@ -100,6 +104,30 @@
     return tr;
   }
   function item(txt) { const li = document.createElement("li"); li.textContent = txt; return li; }
+
+  // Paginação: 10 linhas por página, para a tela não virar uma rolagem sem fim. A página escolhida é mantida
+  // entre as atualizações (volta para a última válida se a lista encolher).
+  const POR_PAGINA = 10;
+  const paginaAtual = {};
+  function paginar(id, linhas, vazia) {
+    const total = Math.max(1, Math.ceil(linhas.length / POR_PAGINA));
+    const pg = Math.min(paginaAtual[id] || 1, total);
+    paginaAtual[id] = pg;
+    $(id).replaceChildren(...(linhas.length ? linhas.slice((pg - 1) * POR_PAGINA, pg * POR_PAGINA) : [vazia]));
+    const nav = $("pag-" + id);
+    nav.hidden = total <= 1;
+    if (total <= 1) return nav.replaceChildren();
+    const botao = (rotulo, destino, desligado) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = rotulo; b.disabled = desligado;
+      b.onclick = () => { paginaAtual[id] = destino; paginar(id, linhas, vazia); };
+      return b;
+    };
+    const info = document.createElement("span");
+    info.className = "mut";
+    info.textContent = "página " + pg + " de " + total + " · " + linhas.length + " itens";
+    nav.replaceChildren(botao("‹ Anterior", pg - 1, pg === 1), info, botao("Próxima ›", pg + 1, pg === total));
+  }
 
   let ultimo = null;
   function render(s) {
@@ -127,25 +155,26 @@
     const avisos = [...(s.avisos || [])];
     if (s.erro && r) avisos.unshift("Última checagem falhou (" + s.erro + "); dados abaixo são de antes.");
     if (atraso != null && s.intervaloMin && atraso > s.intervaloMin * 3) avisos.unshift("Monitor sem checar há " + idade(atraso) + " — verifique o container.");
-    $("avisos").replaceChildren(...(avisos.length ? avisos.map(item) : [item("Nenhum aviso")]));
+    $("sec-avisos").hidden = !avisos.length; // sem aviso, a seção some
+    $("avisos").replaceChildren(...avisos.map(item));
 
     const aus = r ? r.notasAusentes.map((n) => {
       const desde = s.ausentesDesde[n.numero + "/" + n.serie];
       const m = desde ? minDesde(desde) : 0;
       return linha([n.numero + " / " + n.serie, desde ? hora(desde) : "—", desde ? idade(m) : "—"], m >= VELHO_MIN ? "velho" : "");
     }) : [];
-    $("ausentes").replaceChildren(...(aus.length ? aus : [linha(["Nenhuma", "", ""])]));
+    paginar("ausentes", aus, linha(["Nenhuma", "", ""]));
 
     renderCiclo(s.ciclo);
 
-    $("series").replaceChildren(...(r ? r.series.map((x) => linha([
+    paginar("series", r ? r.series.map((x) => linha([
       String(x.serie),
       x.totalAusentes === -1 ? "0" : String(x.total),
       x.totalAusentes === -1 ? "—" : x.min + " → " + x.max,
       x.tetoMl != null ? String(x.tetoMl) : "—",
       x.ultimaMlNoFtp == null ? "—" : x.ultimaMlNoFtp ? "sim" : "NÃO",
       x.totalAusentes === -1 ? "sem XML" : String(x.totalAusentes),
-    ], x.totalAusentes !== 0 ? "velho" : "")) : []));
+    ], x.totalAusentes !== 0 ? "velho" : "")) : [], linha(["—", "", "", "", "", ""]));
   }
 
   const MODO = { off: "desligada (MODO_AGENDA=off) — monitor pausado", sombra: "SOMBRA — roda sem contingência e sem enviar avisos", ativo: "ativa — o monitor agenda, espera e avisa" };
@@ -215,7 +244,7 @@
         new Date(e.em).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" }),
         ROTULO[e.tipo] || e.tipo, e.texto,
       ]));
-      $("eventos").replaceChildren(...(evs.length ? evs : [linha(["", "Nenhum aviso neste dia", ""])]));
+      paginar("eventos", evs, linha(["", "Nenhuma ocorrência neste dia", ""]));
     } catch (e) {
       $("eventos").replaceChildren(linha(["", "Histórico indisponível", e.message]));
     }
