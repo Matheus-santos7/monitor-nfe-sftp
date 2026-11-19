@@ -37,14 +37,30 @@
   select { font:inherit; padding:5px 8px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--tx); }
   .linhah2 { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   button:disabled { opacity:.5; cursor:not-allowed; }
+  .login { max-width:360px; margin:12vh auto 0; }
+  .login label { display:block; margin:12px 0 4px; }
+  .login input { width:100%; box-sizing:border-box; font:inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--bd); background:var(--bg); color:var(--tx); }
+  .login button { margin-top:16px; width:100%; }
+  .login .msg { margin-top:12px; min-height:1.4em; }
   button { font:inherit; padding:6px 12px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--tx); cursor:pointer; }
 </style>
 </head>
 <body>
-<main>
+<section id="login" class="login card" hidden aria-labelledby="titulo-login">
+  <h1 id="titulo-login">Painel NF-e SFTP</h1>
+  <form id="form-login" novalidate>
+    <label for="usuario">Usuário</label>
+    <input id="usuario" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="senha">Senha</label>
+    <input id="senha" name="password" type="password" autocomplete="current-password" required>
+    <button id="entrar" type="submit">Entrar</button>
+    <div id="msg-login" class="msg mut" role="alert" aria-live="assertive"></div>
+  </form>
+</section>
+<main id="painel" hidden>
   <header>
     <h1 id="cliente">Painel NF-e SFTP</h1>
-    <span class="mut"><span id="checado">—</span> · <button id="recarregar" type="button">Atualizar</button></span>
+    <span class="mut"><span id="checado">—</span> · <button id="recarregar" type="button">Atualizar</button> · <span id="quem"></span> <button id="sair" type="button">Sair</button></span>
   </header>
   <div id="banner" class="banner aguardando" role="status" aria-live="polite">Carregando…</div>
 
@@ -67,18 +83,11 @@
   <div class="card"><table><thead><tr><th>Série</th><th>XMLs no FTP</th><th>FTP</th><th>Teto ML</th><th>Última ML no FTP</th><th>Ausentes</th></tr></thead><tbody id="series"></tbody></table></div>
 </main>
 <script>
-  // Token: vem na URL (?token=) uma vez, fica só nesta aba e sai da barra de endereço (histórico, print, link copiado).
-  const token = (() => {
-    const daUrl = new URLSearchParams(location.search).get("token");
-    try {
-      if (daUrl) sessionStorage.setItem("token", daUrl);
-      if (daUrl) history.replaceState(null, "", location.pathname);
-      return daUrl || sessionStorage.getItem("token") || "";
-    } catch {
-      return daUrl || "";
-    }
-  })();
-  const auth = { cache: "no-store", headers: { Authorization: "Bearer " + token } };
+  // Sessão em cookie HttpOnly (o JS nunca vê nada secreto). X-Painel: 1 = prova de que a chamada é deste painel (CSRF).
+  const auth = { cache: "no-store", credentials: "same-origin", headers: { "X-Painel": "1" } };
+  // Link antigo com ?token=…: não vale mais; limpa a barra de endereço e avisa.
+  const linkAntigo = new URLSearchParams(location.search).has("token");
+  if (linkAntigo) history.replaceState(null, "", location.pathname);
   const VELHO_MIN = 15; // furo com mais de 15 min já é atraso real, não latência de envio
   const $ = (id) => document.getElementById(id);
   const hora = (iso) => new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
@@ -95,6 +104,7 @@
   let ultimo = null;
   function render(s) {
     ultimo = s;
+    $("quem").textContent = s.usuario ? s.usuario + (s.permissao === "operacao" ? " (operação)" : " (leitura)") : "";
     $("cliente").textContent = s.cliente ? s.cliente.nome + " · Conta " + s.cliente.conta : "Painel NF-e SFTP";
     document.title = (s.status === "ok" ? "✅" : s.status === "aguardando" ? "⏳" : "⚠️") + " Painel NF-e SFTP";
     const r = s.resultado;
@@ -147,13 +157,13 @@
     else if (c.proximo) linhas.push("Próximo ciclo: " + hora(c.proximo));
     const u = c.ultimo;
     if (u) {
-      linhas.push("Último ciclo (" + (u.origem === "manual" ? "manual" : "agenda") + (u.sombra ? ", sombra" : "") + "): " + hora(u.inicio) + " · " +
+      linhas.push("Último ciclo (" + (u.origem === "manual" ? "manual" + (u.quem ? " por " + u.quem : "") : "agenda") + (u.sombra ? ", sombra" : "") + "): " + hora(u.inicio) + " · " +
         (STATUS_CICLO[u.status] || u.status) + " · " + u.mensagens + " aviso(s)" + (u.sombra ? " não enviados" : "") +
         (u.semEntrega ? " · " + u.semEntrega + " SEM ENTREGA em nenhum canal" : "") +
         (u.erro ? " · " + u.etapaFalha + ": " + u.erro : ""));
     } else if (c.modo !== "off") linhas.push("Nenhum ciclo rodou desde que o monitor subiu.");
     $("ciclo").replaceChildren(...linhas.map(item));
-    $("executar").hidden = ultimo?.permissao !== "operacao"; // token de leitura (time/cliente) não opera
+    $("executar").hidden = ultimo?.permissao !== "operacao"; // conta de leitura (time/cliente) não opera
     $("executar").disabled = c.modo === "off" || c.emAndamento;
     $("executar").title = c.modo === "off" ? "Com MODO_AGENDA=off o monitor está pausado" : c.emAndamento ? "Já há um ciclo em andamento" : "";
   }
@@ -162,6 +172,7 @@
     if (!confirm(real ? "Rodar o ciclo agora? Pode disparar contingência real e enviar avisos." : "Rodar o ciclo agora em modo sombra (sem contingência, sem avisos)?")) return;
     try {
       const resp = await fetch("/ciclo/agora", { ...auth, method: "POST" });
+      if (resp.status === 401) return mostrarLogin("Sua sessão expirou. Entre de novo.");
       const r = await resp.json();
       if (!resp.ok) throw new Error(r.erro || "HTTP " + resp.status);
     } catch (e) {
@@ -210,27 +221,70 @@
   }
   $("dia").onchange = (ev) => { diaEscolhido = ev.target.value; carregarHistorico(); };
 
+  function mostrarLogin(msg) {
+    $("painel").hidden = true;
+    $("login").hidden = false;
+    $("msg-login").textContent = msg || "";
+    $("senha").value = "";
+    $("usuario").focus();
+  }
+  function mostrarPainel() {
+    $("login").hidden = true;
+    $("painel").hidden = false;
+  }
+
   async function carregar() {
-    if (!token) {
-      $("banner").className = "banner erro";
-      $("banner").textContent = "Abra o painel pelo link com ?token=… que você recebeu.";
-      return;
-    }
-    carregarHistorico();
     try {
       const resp = await fetch("/status", auth);
+      if (resp.status === 401) return mostrarLogin(linkAntigo ? "O link com token não vale mais: entre com seu usuário e senha." : "");
       const s = await resp.json();
       if (!resp.ok) throw new Error(s.erro || "HTTP " + resp.status);
+      mostrarPainel();
       render(s);
+      carregarHistorico();
     } catch (e) {
+      mostrarPainel();
       $("banner").className = "banner erro";
       $("banner").textContent = "Painel sem conexão com o monitor: " + e.message;
     }
   }
+
+  $("form-login").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const usuario = $("usuario").value.trim();
+    const senha = $("senha").value;
+    if (!usuario || !senha) return ($("msg-login").textContent = "Informe usuário e senha.");
+    $("entrar").disabled = true;
+    $("msg-login").textContent = "Entrando…";
+    try {
+      const resp = await fetch("/login", {
+        ...auth,
+        method: "POST",
+        headers: { ...auth.headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario, senha }),
+      });
+      const r = await resp.json().catch(() => ({}));
+      if (!resp.ok) return ($("msg-login").textContent = r.erro || "Não foi possível entrar (HTTP " + resp.status + ").");
+      $("senha").value = "";
+      $("msg-login").textContent = "";
+      await carregar();
+    } catch (e) {
+      $("msg-login").textContent = "Sem conexão com o monitor: " + e.message;
+    } finally {
+      $("entrar").disabled = false;
+    }
+  };
+
+  $("sair").onclick = async () => {
+    await fetch("/logout", { ...auth, method: "POST" }).catch(() => {});
+    ultimo = null;
+    mostrarLogin("Você saiu.");
+  };
+
   $("recarregar").onclick = carregar;
   carregar();
-  setInterval(carregar, 60000); // lê o estado a cada 1 min; o monitor checa a cada intervaloMin
-  setInterval(() => ultimo && render(ultimo), 30000); // mantém o "há X min" vivo
+  setInterval(() => !$("painel").hidden && carregar(), 60000); // estado a cada 1 min; nada roda na tela de login
+  setInterval(() => ultimo && !$("painel").hidden && render(ultimo), 30000); // mantém o "há X min" vivo
 </script>
 </body>
 </html>

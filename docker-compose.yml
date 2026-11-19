@@ -30,8 +30,12 @@ services:
       CONFIG_PATH: /app/config.yml
       PORT: "8080"
       TZ: ${TZ}
-      MONITOR_HTTP_TOKEN: ${MONITOR_HTTP_TOKEN:-} # operação: time técnico (Executar agora)
-      PAINEL_TOKEN: ${PAINEL_TOKEN:-}             # leitura: time e cliente (painel e histórico)
+      MONITOR_HTTP_TOKEN: ${MONITOR_HTTP_TOKEN:-} # Bearer para scripts/integrações (API_HOST); nunca na URL
+      # Login do painel: contas por pessoa (npm run senha) e segredo que assina o cookie de sessão
+      PAINEL_USUARIOS: ${PAINEL_USUARIOS:-}
+      SESSAO_SEGREDO: ${SESSAO_SEGREDO:-}
+      PAINEL_HOST: ${PAINEL_HOST:-painel.localhost} # Origin permitida (CSRF)
+      PAINEL_PORTA: ${PAINEL_PORTA:-8080}
       FAKE_NOTA: ${FAKE_NOTA:-}
       PAINEL_INTERVALO_MIN: ${PAINEL_INTERVALO_MIN:-5}
       # Padrões seguros. No servidor, o .env define MODO_AGENDA=ativo e CONTINGENCIA=on.

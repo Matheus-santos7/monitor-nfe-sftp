@@ -26,6 +26,8 @@ export type DepsOrquestrador = {
 export type ResumoRodada = {
   execucao: string;
   origem: "agenda" | "manual";
+  /** Quem disparou (conta do painel ou token-api), só em origem manual. */
+  quem?: string;
   sombra: boolean;
   inicio: string;
   fim: string;
@@ -95,9 +97,9 @@ function mensagemFalha(execucao: string, etapa: string, erro: string): Mensagem 
 
 export async function executarCicloCompleto(
   deps: DepsOrquestrador,
-  opcoes: { execucao: string; origem: ResumoRodada["origem"]; sombra: boolean },
+  opcoes: { execucao: string; origem: ResumoRodada["origem"]; sombra: boolean; quem?: string },
 ): Promise<ResumoRodada> {
-  const { execucao, origem, sombra } = opcoes;
+  const { execucao, origem, sombra, quem } = opcoes;
   const inicio = deps.agora().toISOString();
   let status: ResumoRodada["status"] = "falhou";
   let etapaFalha: string | null = null;
@@ -160,6 +162,7 @@ export async function executarCicloCompleto(
   const resumo: ResumoRodada = {
     execucao,
     origem,
+    ...(quem ? { quem } : {}),
     sombra,
     inicio,
     fim: deps.agora().toISOString(),
@@ -174,7 +177,10 @@ export async function executarCicloCompleto(
 }
 
 /** Dispara em segundo plano. Uma rodada por vez: com outra em andamento (ex.: na espera do lote), retorna false. */
-export function dispararCiclo(deps: DepsOrquestrador, opcoes: { origem: ResumoRodada["origem"]; sombra: boolean }): boolean {
+export function dispararCiclo(
+  deps: DepsOrquestrador,
+  opcoes: { origem: ResumoRodada["origem"]; sombra: boolean; quem?: string },
+): boolean {
   if (estado.emAndamento) {
     console.log(`▶ Ciclo (${opcoes.origem}) pulado: o anterior ainda está em ${estado.etapa ?? "andamento"}`);
     return false;

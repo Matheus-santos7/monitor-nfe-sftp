@@ -7,21 +7,25 @@ No servidor: `https://API_HOST` (via proxy HTTPS). No próprio servidor ou local
 | Rota | Token | Quem chama | Efeito |
 |---|---|---|---|
 | `GET /health` | não | Docker / você | Vivo? Não toca em nada externo |
-| `GET /status` | leitura | painel | Última checagem, em memória, e a `permissao` do token |
+| `GET /status` | leitura | painel | Última checagem, em memória, com `permissao` e `usuario` |
+| `POST /login` · `POST /logout` · `GET /sessao` | — | painel | Login (só pelo `PAINEL_HOST`; no `API_HOST` respondem 404) |
 | `GET /historico?dia=` | leitura | painel | Histórico e saúde do dia |
 | `POST /ciclo/agora` | **operação** | botão do painel | Ciclo completo em segundo plano. **Em `ativo`, pode disparar contingência real** |
 | `GET /ml/teto` | **operação** | você (depuração) | Só leitura (ZIP do ML) |
 
 Toda resposta JSON tem `ok: true|false`. Em erro, ela traz `erro: "<mensagem>"`. Uma rota inexistente responde 404, com a lista de rotas.
 
-Autenticação, **só por header** (`Authorization: Bearer {token}` ou `X-Token`). Token na URL não vale na API.
+Autenticação, **nunca pela URL**:
 
-| Token | Nível | Rotas |
+| Como | Para quem | Nível |
 |---|---|---|
-| `MONITOR_HTTP_TOKEN` (ou `http.token` no `config.yml`) | operação | todas |
-| `PAINEL_TOKEN` | leitura | `/status`, `/historico`. Nas de operação, a resposta é **403** |
+| Cookie de sessão (login no painel, `POST /login`) | Pessoas (contas em `PAINEL_USUARIOS`) | O papel da conta: `leitura` ou `operacao` |
+| `Authorization: Bearer <MONITOR_HTTP_TOKEN>` (ou `X-Token`) | Scripts e integrações | `operacao` |
 
-**Sem `MONITOR_HTTP_TOKEN` configurado, todas as rotas, menos `/health`, respondem 401** (o Executar agora pode disparar contingência real). Um token desconhecido também recebe 401.
+- Com `leitura`, as rotas de operação respondem **403**. Sem acesso válido, **401**.
+- Com cookie, toda rota que muda algo (`POST`) exige o header `X-Painel: 1` e `Origin` igual a `https://PAINEL_HOST`, senão **403** (proteção contra CSRF). O Bearer não precisa disso.
+- `POST /login` (`{"usuario", "senha"}`, corpo de até 4 KB): `200` devolve o cookie; `401` para usuário ou senha errados (a mensagem não diz qual); `429` depois de 5 erros do mesmo usuário e IP (ou 20 do mesmo IP) em 15 min; `503` sem `SESSAO_SEGREDO`.
+- O `API_HOST` repassa só o Bearer: o proxy remove o `Cookie`, e `/login`, `/logout` e `/sessao` respondem 404 ali.
 
 ## `POST /ciclo/agora`
 

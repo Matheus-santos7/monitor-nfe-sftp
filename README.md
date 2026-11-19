@@ -71,7 +71,7 @@ docker compose logs -f            # os três serviços; Ctrl+C sai sem parar nad
 
 | Serviço | URL |
 |---|---|
-| Painel (frontend) | http://localhost:8080/?token=SEU_MONITOR_HTTP_TOKEN · ou https://painel.localhost/?token=… (certificado local) |
+| Painel (frontend) | http://localhost:8080 · ou https://painel.localhost (certificado local). Login com usuário e senha |
 | API (backend) | http://localhost:8081/health · ou https://api.localhost/health |
 
 No painel, o botão **Executar agora** roda o ciclo inteiro em sombra, e os avisos aparecem só no log.
@@ -96,8 +96,9 @@ Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, am
 
 | Variável | Uso |
 |---|---|
-| `MONITOR_HTTP_TOKEN` | Token de **operação** (time técnico: painel + Executar agora). **Obrigatório**: sem ele, a API recusa tudo, menos `/health` |
-| `PAINEL_TOKEN` | Token de **leitura** (time e cliente: painel e histórico, sem o botão) |
+| `PAINEL_USUARIOS` | Contas do painel, uma por pessoa: `leitura` (time e cliente) ou `operacao` (time técnico, com o Executar agora). Gere com `docker compose exec api node dist/senha.js <usuario> <papel>` |
+| `SESSAO_SEGREDO` | Assina o cookie de login. **Obrigatório** para entrar no painel (`openssl rand -hex 32`) |
+| `MONITOR_HTTP_TOKEN` | Bearer da API para scripts (`https://API_HOST`, só no header) |
 | `PAINEL_HOST` / `API_HOST` | Os DNS do painel e da API (o Caddy emite o HTTPS). Local: `painel.localhost` / `api.localhost` |
 | `CONTINGENCIA` | Só `on` renotifica. Vazio = desligada. **Só no servidor:** `CONTINGENCIA=on` |
 | `ML_CLIENT_ID` / `ML_CLIENT_SECRET` / `ML_REFRESH_TOKEN` / `ML_USER_ID` | OAuth e seller do ML. O refresh é de uso único |
@@ -119,11 +120,12 @@ Siga **[docs/deploy.md](docs/deploy.md)**: servidor AWS (Elastic IP, Security Gr
 | Sintoma | Causa | O que fazer |
 |---|---|---|
 | `EISDIR` na subida | Faltava `.env`, `config.yml` ou `bastion.pem`, e o Docker criou uma **pasta** no lugar | Apague a pasta, copie o `.example` e suba de novo |
-| `401` "defina MONITOR_HTTP_TOKEN" | Token ausente no `.env` | Gere com `openssl rand -hex 32` e recrie o monitor |
+| Login responde "login desligado" | Falta `SESSAO_SEGREDO` no `.env` | Gere com `openssl rand -hex 32` e recrie a `api` |
+| "usuário ou senha inválidos" / "muitas tentativas" | Senha errada / 5 erros em 15 min | Espere 15 min ou gere a senha de novo (deploy.md, seção 3) |
 | `Cannot parse privateKey` | `secrets/bastion.pem` vazio ou inválido | Coloque a chave real (`chmod 600`) |
 | Painel "Checagem incompleta", aviso "Teto ML indisponível" | ML fora, 429 ou token do ML inválido | 429: suba `ML_TETO_CACHE_MIN`. Token morto: [deploy.md](docs/deploy.md#6-o-token-do-mercado-livre-morreu) |
-| Painel "Painel sem conexão com o monitor" ou 401 | Container parado ou token errado no link | `docker compose ps` e confira o `?token=` |
-| Cliente não vê o botão **Executar agora** | Esperado: o `PAINEL_TOKEN` é só de leitura | Para operar, use o link com `MONITOR_HTTP_TOKEN` (só o time técnico) |
+| Painel "Painel sem conexão com o monitor" | Container parado | `docker compose ps` e `docker compose logs api` |
+| Cliente não vê o botão **Executar agora** | Esperado: a conta dele é `leitura` | Só contas `operacao` (time técnico) operam |
 | Caddy: erro de ACME / certificado | DNS ainda não aponta para o servidor, ou portas 80/443 fechadas | Confira o registro A e o Security Group; o Caddy tenta de novo sozinho |
 | Log diz `Contingência desligada` ou `SOMBRA` no servidor | Falta `CONTINGENCIA=on` / `MODO_AGENDA=ativo` no `.env` | Ajuste o `.env` e `docker compose up -d --force-recreate api` |
 | Painel "SEM ENTREGA em nenhum canal" | Webhook ou SMTP errado ou fora | Veja o log `▶ Aviso não entregue em …` e corrija a variável |

@@ -6,15 +6,19 @@ O painel mostra, em tempo real, se a integração está em dia. Ele **não envia
 
 | Onde | URL |
 |---|---|
-| Servidor | `https://PAINEL_HOST/?token=<token>` |
-| Local | `http://localhost:8080/?token=<token>` ou `https://painel.localhost/?token=<token>` |
+| Servidor | `https://PAINEL_HOST` |
+| Local | `http://localhost:8080` ou `https://painel.localhost` |
 
-| Token no link | Para quem | Vê |
+A página abre na tela de **login** (usuário e senha). Uma conta por pessoa ([deploy.md](deploy.md#3-operação-do-dia-a-dia) explica como criar):
+
+| Papel da conta | Para quem | Vê |
 |---|---|---|
-| `PAINEL_TOKEN` (leitura) | Time e **cliente** | Tudo, menos o botão **Executar agora** |
-| `MONITOR_HTTP_TOKEN` (operação) | Só o time técnico | Tudo, com o botão |
+| `leitura` | Time e **cliente** | Tudo, menos o botão **Executar agora** (a API também recusa: 403) |
+| `operacao` | Só o time técnico | Tudo, com o botão |
 
-O token vai no link só para abrir a página. O JS guarda o token na aba (`sessionStorage`), **tira da barra de endereço** e passa a enviá-lo no header. Os logs do nginx gravam o caminho sem a query string, então o token não vai para o log. A página não é indexada (`noindex`), não repassa a URL (`no-referrer`) e não pode ser embutida em outro site (`frame-ancestors 'none'`).
+**Nada secreto vai na URL.** O login cria uma sessão de 12 h num cookie `HttpOnly` (o JS da página não lê), `Secure` (só HTTPS) e `SameSite=Strict` (não vai em requisições de outros sites). O botão **Sair** apaga o cookie. As ações que mudam algo exigem, além do cookie, o header `X-Painel` e a origem do painel, para que outro site não consiga disparar o **Executar agora** no navegador de quem está logado. Um link antigo com `?token=` é ignorado e a página pede o login. A página não é indexada (`noindex`), não repassa a URL (`no-referrer`) e não pode ser embutida em outro site (`frame-ancestors 'none'`).
+
+Errar a senha 5 vezes em 15 min, do mesmo IP, bloqueia aquele usuário por 15 min naquele IP. Uma pessoa errando de outro lugar não trava o cliente.
 
 ## Atualização
 
@@ -39,7 +43,7 @@ O botão **Executar agora** roda o ciclo completo na hora. Ele pede confirmaçã
 | Vermelho `erro` | "Checagem falhou: …" | O SFTP ou a checagem quebrou | Veja o log do monitor |
 | Vermelho `erro` | "Checagem incompleta — veja os avisos" | Cobertura degradada (ex.: sem teto do ML) | Leia **Avisos**. Pode haver furo que o monitor não está vendo |
 | Cinza `aguardando` | "Aguardando a primeira checagem…" | O monitor acabou de subir | Espere um ciclo |
-| Vermelho | "Painel sem conexão com o monitor" | A página não alcança o `/status` (monitor fora, token errado) | Confira o container e o token |
+| Vermelho | "Painel sem conexão com o monitor" | A página não alcança o `/status` (monitor fora) | Confira o container e o token |
 
 ### Avisos
 

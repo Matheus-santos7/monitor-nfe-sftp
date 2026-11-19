@@ -22,9 +22,11 @@ As portas 8080 e 8081 só aceitam conexão do próprio servidor (para `curl` ou 
 
 | Quem | Link | Pode |
 |---|---|---|
-| Time técnico | `https://PAINEL_HOST/?token=<MONITOR_HTTP_TOKEN>` | Ver tudo e usar o **Executar agora** |
-| Time e cliente | `https://PAINEL_HOST/?token=<PAINEL_TOKEN>` | Ver o painel e o histórico. O botão não aparece, e a API recusa com 403 |
-| Integrações e scripts | `https://API_HOST/…`, com `Authorization: Bearer <token>` | Conforme o token |
+| Time técnico | `https://PAINEL_HOST`: login com conta **operacao** | Ver tudo e usar o **Executar agora** |
+| Cliente (e quem só acompanha) | `https://PAINEL_HOST`: login com conta **leitura** | Ver o painel e o histórico. O botão não aparece, e a API recusa com 403 |
+| Integrações e scripts | `https://API_HOST/…`, com `Authorization: Bearer <MONITOR_HTTP_TOKEN>` | Tudo. Não há login nem cookie por este endereço |
+
+Ninguém recebe token no link. Cada pessoa tem a própria conta, criada com `node dist/senha.js` (seção 3), e a sessão dura 12 h num cookie HttpOnly.
 
 ## Antes de começar
 
@@ -42,7 +44,8 @@ As portas 8080 e 8081 só aceitam conexão do próprio servidor (para `curl` ou 
 
 - **Nunca deixe dois servidores rodando o monitor do mesmo cliente** (o antigo e o novo). O token do ML é de uso único, e os dois brigariam por ele. A contingência e os avisos sairiam em dobro.
 - **Nunca use o `ML_REFRESH_TOKEN` da produção na sua máquina.** A primeira renovação local invalida o do servidor.
-- **Nunca mande o token de operação para o cliente.** Para ele, use só o `PAINEL_TOKEN`.
+- **Nunca crie conta `operacao` para o cliente.** Para ele, só `leitura`. E nunca mande o `MONITOR_HTTP_TOKEN` para ninguém de fora do time técnico.
+- **Nunca compartilhe uma conta entre pessoas.** O log registra quem entrou e quem apertou **Executar agora**.
 - **Nunca coloque `MODO_AGENDA=ativo` ou `CONTINGENCIA=on` fora do servidor.**
 - **Nunca abra 8080/8081 no Security Group.** Elas não têm HTTPS.
 
@@ -63,8 +66,9 @@ MODO_AGENDA=ativo
 CONTINGENCIA=on
 PAINEL_HOST=monitor.seusetor.com.br
 API_HOST=api-monitor.seusetor.com.br
-MONITOR_HTTP_TOKEN=<openssl rand -hex 32>   # operação, só o time técnico
-PAINEL_TOKEN=<openssl rand -hex 32>         # leitura, time e cliente (diferente do de cima)
+MONITOR_HTTP_TOKEN=<openssl rand -hex 32>   # Bearer da API, só scripts do time técnico
+SESSAO_SEGREDO=<openssl rand -hex 32>       # assina o cookie de login
+PAINEL_USUARIOS=                            # preenchido na seção 3 (uma linha por pessoa, separadas por vírgula)
 ```
 
 Se estiver vindo de outro servidor, faça antes a **seção 4 (migração)**.
@@ -86,10 +90,11 @@ Testes:
 
 ```bash
 curl -s https://API_HOST/health                                               # {"ok":true,...}
-curl -s -H "Authorization: Bearer $PAINEL_TOKEN" https://API_HOST/status | head -c 200
+curl -s -H "Authorization: Bearer $MONITOR_HTTP_TOKEN" https://API_HOST/status | head -c 200
+curl -s -o /dev/null -w "%{http_code}\n" https://API_HOST/login                        # 404: login só pelo painel
 ```
 
-Depois abra `https://PAINEL_HOST/?token=<MONITOR_HTTP_TOKEN>`. A seção "Ciclo de monitoramento" deve mostrar "ativa" e o próximo horário. Use o **Executar agora** e confira que os avisos chegam nos canais.
+Crie as contas (seção 3), abra `https://PAINEL_HOST` e entre com uma conta `operacao`. No log da `api`, deve aparecer `▶ Login: <usuário> (operacao)`. A seção "Ciclo de monitoramento" deve mostrar "ativa" e o próximo horário. Use o **Executar agora** e confira que os avisos chegam nos canais.
 
 ## 3. Operação do dia a dia
 
@@ -103,7 +108,12 @@ Depois abra `https://PAINEL_HOST/?token=<MONITOR_HTTP_TOKEN>`. A seção "Ciclo 
 | Aplicar uma mudança no `config.yml` (ex.: série nova) | `docker compose restart api` |
 | Pausar o monitor (manutenção do gateway) | `MODO_AGENDA=off` no `.env` e recriar a `api`. O painel continua mostrando o estado |
 | Manter os avisos, mas sem contingência | `CONTINGENCIA=off` no `.env` e recriar a `api` |
-| Trocar um token (ex.: link vazou) | Gere um novo, troque no `.env`, recrie a `api` e envie os links novos. Os antigos param na hora |
+| **Criar a conta de uma pessoa** | `docker compose exec api node dist/senha.js <usuario> <leitura\|operacao>` (pede a senha, mínimo de 12 caracteres, sem eco). Acrescente a linha impressa em `PAINEL_USUARIOS` (separe as contas por vírgula) e recrie a `api` |
+| Trocar a senha de alguém | Gere de novo com o mesmo usuário e substitua a linha. **As sessões abertas dessa pessoa caem na hora** |
+| Tirar o acesso de alguém | Apague a linha da pessoa em `PAINEL_USUARIOS` e recrie a `api`. A sessão dela para de valer |
+| Derrubar todas as sessões (suspeita de vazamento) | Gere um novo `SESSAO_SEGREDO` e recrie a `api`. Todo mundo entra de novo |
+| Trocar o token da API (scripts) | Gere um novo `MONITOR_HTTP_TOKEN`, troque no `.env` e nos scripts, recrie a `api` |
+| Ver quem entrou e quem operou | `docker compose logs api \| grep -E "Login\|Executar agora"` |
 
 Os logs giram sozinhos: são 10 MB × 5 arquivos por serviço.
 
@@ -114,7 +124,7 @@ A ordem existe por causa do token do ML de uso único e da contingência.
 1. Confirme que o **IP da AWS está liberado** no SFTP do cliente e no bastion do Nerus. Se tiver acesso, teste antes, do servidor novo: `ssh` no bastion e `sftp` no cliente.
 2. **No servidor antigo, pare tudo:** `docker compose down`. Se ele ainda roda o n8n, desative também o workflow no editor antes. Com isso, nada mais renova o token nem agenda.
 3. Copie para o servidor novo, por exemplo com `scp -r`: o `.env`, o `monitoramento/config.yml`, a chave do bastion e a **pasta `monitoramento/data/` inteira**. Ela contém o `ml-tokens.json` (o token do ML **atual**, com prioridade sobre o `.env`), o `contingencias.json` e o `historico/`.
-4. No `.env` novo, acrescente as variáveis da seção 1 (`MODO_AGENDA`, `CONTINGENCIA`, hosts, `PAINEL_TOKEN`). Tire `COMPOSE_FILE` e as variáveis `N8N_*`, `POSTGRES_*` e de domínio do Traefik, se existirem.
+4. No `.env` novo, acrescente as variáveis da seção 1 (`MODO_AGENDA`, `CONTINGENCIA`, hosts, `SESSAO_SEGREDO`, `PAINEL_USUARIOS`). **Gere um `MONITOR_HTTP_TOKEN` novo**: o antigo passou por URL (links com `?token=`) e deve ser considerado vazado. Tire o `PAINEL_TOKEN`, se existir. Tire `COMPOSE_FILE` e as variáveis `N8N_*`, `POSTGRES_*` e de domínio do Traefik, se existirem.
 5. Suba e verifique (seção 2).
 6. Mantenha o servidor antigo **parado** por uma semana, para rollback. Não o ligue junto com o novo.
 
@@ -160,8 +170,9 @@ Os comentários de cada uma estão no `.env.example`. "No servidor" significa ob
 | `ALERT_EMAIL_TO` | Não¹ | vazio | Destinatário do e-mail (exige `SMTP_HOST`) | `ops@exemplo.com` |
 | `WHATSAPP_WEBHOOK_URL` | Não¹ | vazio | Webhook do WhatsApp (recebe `{number, text}`) | `https://…` |
 | `WHATSAPP_TO` | Não | vazio | Número de destino do WhatsApp | `5511999999999` |
-| `MONITOR_HTTP_TOKEN` | **Sim** | vazio | Token de **operação** (time técnico). Sem ele a API recusa tudo, menos `/health` | `openssl rand -hex 32` |
-| `PAINEL_TOKEN` | Não² | vazio | Token de **leitura** (time e cliente). Diferente do de operação | `openssl rand -hex 32` |
+| `PAINEL_USUARIOS` | **Sim²** | vazio | Contas do painel, `usuario:papel:salt:hash` separadas por vírgula (gere com `node dist/senha.js`) | `ana:operacao:…:…,cliente:leitura:…:…` |
+| `SESSAO_SEGREDO` | **Sim²** | vazio | Assina o cookie de login (mín. 32). Trocar derruba todas as sessões | `openssl rand -hex 32` |
+| `MONITOR_HTTP_TOKEN` | Não | vazio | Bearer da API para scripts (só no header). Sem ele, a API não aceita Bearer | `openssl rand -hex 32` |
 | `ML_ACCESS_TOKEN` | Não | vazio | Access token do ML (renovado sozinho; ~6 h) | `APP_USR-…` |
 | `ML_REFRESH_TOKEN` | Recomendada³ | vazio | Refresh do ML, **uso único**. Nunca o da produção fora dela | `TG-…` |
 | `ML_CLIENT_ID` | Recomendada³ | vazio | App do ML (OAuth). Também vira o `application_id` da contingência | `0000…` |
@@ -195,7 +206,7 @@ Os comentários de cada uma estão no `.env.example`. "No servidor" significa ob
 | `CONTINGENCIA` | No servidor | `off` | `on` renotifica o gateway **de verdade**. **Servidor: `on`**; fora dele, nunca | `on` |
 
 ¹ Pelo menos **um** canal de aviso no servidor (Chat, WhatsApp ou e-mail com `SMTP_HOST` + `ALERT_EMAIL_TO`); o log da subida avisa se nenhum estiver configurado.
-² Sem ele, só o token de operação entra: não mande esse ao cliente.
+² Sem `SESSAO_SEGREDO` o login fica desligado; sem `PAINEL_USUARIOS` ninguém entra. O log da subida avisa os dois casos.
 ³ Sem as credenciais do ML não há teto: o monitor roda só com o FTP e o painel mostra "cobertura parcial".
 ⁴ Sem elas não há diagnóstico no Nerus: cada furo sai "Não foi possível consultar o Nerus".
 ⁵ Sem elas a contingência falha (o relatório pede o time técnico).

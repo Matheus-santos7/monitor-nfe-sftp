@@ -37,7 +37,8 @@ Comece pelo [README da raiz](../README.md): visão geral, glossário, como rodar
 | [0003](decisions/0003-diagnostico-via-ssh-mysql.md) | Diagnóstico no MySQL do Nerus via bastion SSH. A parte de orquestração foi substituída pelo ADR-004 |
 | [0004](decisions/0004-regra-no-monitor-n8n-so-orquestra.md) | A regra fica no monitor (`/ciclo`); o n8n só agenda, espera e avisa |
 | [0005](decisions/0005-agenda-e-avisos-no-monitor.md) | O monitor agenda, espera e avisa; o n8n saiu do projeto |
-| [0006](decisions/0006-um-compose-painel-separado-e-https.md) | Um compose (api, painel, proxy Caddy), um DNS por serviço com HTTPS, tokens de operação e leitura |
+| [0006](decisions/0006-um-compose-painel-separado-e-https.md) | Um compose (api, painel, proxy Caddy), um DNS por serviço com HTTPS |
+| [0007](decisions/0007-login-do-painel-sem-token-na-url.md) | Login por conta (cookie de sessão, CSRF, limite de tentativas); nada de token na URL |
 
 ADRs são registro histórico: não se reescrevem, só se substituem por um novo.
 
