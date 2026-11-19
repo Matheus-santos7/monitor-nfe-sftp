@@ -116,7 +116,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
-    networks: [monitor]
+    networks: [monitor] # servidor com proxy em Docker: troque por [monitor, proxy_servidor] (ver networks:, no fim)
     logging: *logs
 
   # Frontend: painel e histórico (login)
@@ -127,7 +127,7 @@ services:
     depends_on: [api]
     ports:
       - "127.0.0.1:9080:80" # painel: só no próprio servidor; o proxy publica em https://PAINEL_HOST
-    networks: [monitor]
+    networks: [monitor] # servidor com proxy em Docker: troque por [monitor, proxy_servidor] (ver networks:, no fim)
     logging: *logs
 
   # Proxy próprio (Caddy, HTTPS automático) — DESLIGADO: o servidor já tem proxy nas portas 80/443.
@@ -191,3 +191,9 @@ volumes:
 networks:
   monitor:
     driver: bridge
+  # Servidor com proxy em Docker (Caddy/nginx/Traefik de outro projeto)? Descomente e ponha o nome da rede dele
+  # (docker inspect <proxy> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'),
+  # e troque networks: [monitor] por [monitor, proxy_servidor] na api e no painel. Ver docs/deploy.md, seção 1b.
+  # proxy_servidor:
+  #   external: true
+  #   name: <rede_do_proxy>

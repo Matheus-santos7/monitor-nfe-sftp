@@ -157,7 +157,48 @@ api-monitor.seusetor.com.br {
 }
 ```
 
-**Se o proxy do servidor roda em Docker** (ex.: Traefik ou nginx num container), `127.0.0.1` dentro dele não é o servidor. Duas saídas:
+**Caddy de outro projeto, em container** (o caso do servidor de implantação: `docker ps` mostra um `…-caddy-1` nas portas 80/443):
+
+1. Descubra a rede do Caddy e onde está o Caddyfile dele:
+   ```bash
+   docker inspect <container-caddy> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+   docker inspect <container-caddy> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+   ```
+2. No `docker-compose.yml` do monitor, ponha a `api` e o `painel` também nessa rede: descomente `proxy_servidor` em `networks:`, com o nome da rede, e use `networks: [monitor, proxy_servidor]` nos dois serviços. Suba com `docker compose up -d`.
+3. Faça uma cópia do Caddyfile do outro projeto (o arquivo do host, do passo 1) e **acrescente no fim** os dois blocos. Por aqui, o Caddy alcança o monitor pelo nome do container:
+   ```bash
+   cp <Caddyfile> <Caddyfile>.bak-$(date +%F)
+   cat >> <Caddyfile> <<'CADDY'
+
+   # --- Monitor NF-e ---
+   monitor.seusetor.com.br {
+   	header Strict-Transport-Security "max-age=86400"
+   	request_body {
+   		max_size 16KB
+   	}
+   	reverse_proxy monitor-painel:80
+   }
+   api-monitor.seusetor.com.br {
+   	header Strict-Transport-Security "max-age=86400"
+   	@sessao path /login /logout /sessao
+   	respond @sessao 404
+   	reverse_proxy monitor-api:8080 {
+   		header_up -Cookie
+   		header_up -X-Real-IP
+   	}
+   }
+   CADDY
+   ```
+   Use `cat >>`, que escreve no mesmo arquivo. Um editor que **substitui** o arquivo faz o container continuar vendo o Caddyfile antigo, porque o bind mount fica preso ao arquivo original.
+4. Valide e recarregue, **sem reiniciar** o outro sistema. O `reload` é sem queda, e com erro de configuração o Caddy mantém a anterior:
+   ```bash
+   docker exec <container-caddy> caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+   docker exec <container-caddy> caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+   docker logs --since 2m <container-caddy> 2>&1 | grep -iE "monitor|certificate|error"
+   ```
+   O Caddy emite o certificado dos dois nomes na hora, desde que os registros DNS já apontem para o servidor. Para desfazer: volte o `.bak` e rode o `reload` de novo.
+
+**Outro proxy em Docker** (Traefik ou nginx num container): `127.0.0.1` dentro dele não é o servidor. Duas saídas:
 - trocar `127.0.0.1` por `host.docker.internal` (com `extra_hosts: ["host.docker.internal:host-gateway"]` no proxy) e publicar as portas do monitor em `0.0.0.0:9080`/`0.0.0.0:9081`, deixando 9080/9081 fechadas no Security Group;
 - ou colocar o proxy na rede `monitor-nfe_monitor` e apontar para `painel:80` e `api:8080`.
 
