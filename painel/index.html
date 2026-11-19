@@ -76,7 +76,7 @@
   <ul id="avisos" class="avisos" hidden></ul>
 
   <h2>Notas ausentes no FTP</h2>
-  <div class="card"><table><thead><tr><th>NF / série</th><th>Situação</th><th>Ausente desde</th><th>Há</th></tr></thead><tbody id="ausentes"></tbody></table><div class="pag" id="pag-ausentes" hidden></div></div>
+  <div class="card"><table><thead><tr><th>NF / série</th><th>Situação</th><th>Desde</th><th>Há</th></tr></thead><tbody id="ausentes"></tbody></table><div class="pag" id="pag-ausentes" hidden></div></div>
 
   <div class="linhah2"><h2>Saúde do dia</h2><label class="mut">Dia <select id="dia"></select></label></div>
   <div class="card"><div class="kpis" id="kpis"></div></div>
@@ -106,6 +106,13 @@
   let VELHO_MIN = 20; // tolerância (TOLERANCIA_MIN do monitor): até aqui é atraso normal de integração; depois, furo
   const $ = (id) => document.getElementById(id);
   const hora = (iso) => new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  // hoje: só "16:36"; outro dia: "18/11 16:36" (cabe no celular sem rolar a tabela)
+  const diaSp = (d) => d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const horaCurta = (iso) => {
+    const d = new Date(iso);
+    const hm = d.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+    return diaSp(d) === diaSp(new Date()) ? hm : d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }) + " " + hm;
+  };
   const minDesde = (iso) => Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   const idade = (m) => m < 60 ? m + " min" : Math.floor(m / 60) + " h " + (m % 60) + " min";
   function linha(cels, cls) {
@@ -186,7 +193,7 @@
     const aus = notas.map(({ n, desde, m }) => linha([
       n.numero + " / " + n.serie,
       m >= VELHO_MIN ? "⚠️ furo" : "⏳ em trânsito",
-      desde ? hora(desde) : "—",
+      desde ? horaCurta(desde) : "—",
       desde ? idade(m) : "—",
     ], m >= VELHO_MIN ? "velho" : ""));
     paginar("ausentes", aus, linha(["Nenhuma", "", "", ""]));
