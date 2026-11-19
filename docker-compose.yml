@@ -1,6 +1,9 @@
 # Monitor NF-e Mercado Livre × SFTP — o projeto inteiro num compose só.
 #
-#   docker compose up -d --build      sobe tudo
+#   Servidor (imagens prontas do GHCR, publicadas pelo CI a cada merge na main):
+#     docker compose pull && docker compose up -d      baixa a versão MONITOR_VERSAO e sobe
+#   Desenvolvimento (compila do código desta pasta):
+#     docker compose up -d --build
 #   docker compose logs -f            acompanha tudo (ou: logs -f api | painel | proxy)
 #
 # Serviços e portas:
@@ -23,6 +26,7 @@ x-logs: &logs
 services:
   # Backend: API + agenda do ciclo + avisos. Sem /painel (o painel é o serviço abaixo).
   api:
+    image: ${MONITOR_REGISTRO:-ghcr.io/matheus-santos7}/monitor-nfe-api:${MONITOR_VERSAO:-latest}
     build: ./monitoramento
     container_name: monitor-api
     restart: unless-stopped
@@ -102,28 +106,22 @@ services:
 
   # Frontend: painel estático (painel/index.html) + repasse das rotas do painel para a api.
   painel:
-    image: nginx:1.27.3-alpine
+    image: ${MONITOR_REGISTRO:-ghcr.io/matheus-santos7}/monitor-nfe-painel:${MONITOR_VERSAO:-latest}
+    build: ./painel # index.html + nginx.conf vão dentro da imagem
     container_name: monitor-painel
     restart: unless-stopped
     depends_on:
       - api
-    volumes:
-      - ./painel/index.html:/usr/share/nginx/html/index.html:ro
-      - ./painel/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "127.0.0.1:${PAINEL_PORTA:-8080}:80"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
     networks:
       - monitor
     logging: *logs
 
   # HTTPS na frente dos dois: certificado automático (Let's Encrypt) para os nomes do .env.
   proxy:
-    image: caddy:2.8.4-alpine
+    image: ${MONITOR_REGISTRO:-ghcr.io/matheus-santos7}/monitor-nfe-proxy:${MONITOR_VERSAO:-latest}
+    build: ./proxy # Caddyfile vai dentro da imagem
     container_name: monitor-proxy
     restart: unless-stopped
     depends_on:
@@ -133,7 +131,6 @@ services:
       PAINEL_HOST: ${PAINEL_HOST:-painel.localhost}
       API_HOST: ${API_HOST:-api.localhost}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data # certificados: não apague
       - caddy_config:/config
     ports:

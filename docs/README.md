@@ -26,7 +26,7 @@ Comece pelo [README da raiz](../README.md): visão geral, glossário, como rodar
 | Integrações | [integracoes.md](integracoes.md) | `sftp.ts`, `ml-auth.ts`, `ml-invoices.ts`, `nerus-db.ts`, `nerus-contigencia.ts` |
 | Visualização (frontend) | [painel.md](painel.md) | `painel/index.html`, `painel/nginx.conf`, `historico.ts`, `job.ts` |
 | Contrato HTTP | [api.md](api.md) | `http.ts` |
-| Infra e operação (AWS) | [deploy.md](deploy.md) | `docker-compose.yml`, `Caddyfile`, `.env.example`, `.github/workflows/ci.yml` |
+| Infra e operação (AWS) | [deploy.md](deploy.md) | `docker-compose.yml`, `proxy/Caddyfile`, `*/Dockerfile`, `.env.example`, `.github/workflows/ci.yml` (testes + publicação das imagens) |
 
 ## Decisões (ADRs)
 

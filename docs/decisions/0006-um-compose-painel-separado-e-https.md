@@ -59,4 +59,5 @@ Até aqui, o backend servia o painel numa rota (`/painel`), havia um overlay `do
 
 - O servidor precisa de Elastic IP, de DNS apontado antes da primeira subida, das portas 80 e 443 abertas e do IP liberado no SFTP do cliente e no bastion do Nerus ([deploy.md](../deploy.md)).
 - Trocar um token invalida na hora os links já enviados.
+- **Imagens prontas no GHCR** (atualização posterior a este ADR): o CI publica `api`, `painel` e `proxy` (`latest` e `sha-<commit>`) depois dos testes, a cada merge na `main`. O servidor guarda só o compose, o `.env`, o `config.yml`, a chave e `data/`, e atualiza com `docker compose pull && docker compose up -d`. O `index.html`, o `nginx.conf` e o `Caddyfile` vão dentro das imagens, sem bind mount.
 - O volume `caddy_data` guarda os certificados. Apagá-lo força a emissão de novos, e o Let's Encrypt tem limite de taxa.

@@ -44,8 +44,8 @@ monitoramento/        serviço Node 22 + TypeScript (a regra inteira)
 docs/                 documentação por camada (ver abaixo)
 secrets/              chave SSH do bastion (fora do Git)
 docker-compose.yml    o projeto inteiro: api, painel e proxy
-painel/               frontend: index.html + nginx.conf
-Caddyfile             proxy HTTPS: um DNS por serviço
+painel/               frontend: index.html + nginx.conf + Dockerfile
+proxy/                Caddyfile + Dockerfile do proxy HTTPS (um DNS por serviço)
 .env.example          modelo do .env (segredos, fora do Git)
 .github/workflows/    CI: typecheck + testes em todo PR
 ```
@@ -150,7 +150,7 @@ Depois de mudar o `.env`: `docker compose up -d --force-recreate api`. Depois de
 
 ## Produção
 
-Siga **[docs/deploy.md](docs/deploy.md)**: servidor AWS (Elastic IP, Security Group, DNS), `.env` do servidor (`MODO_AGENDA=ativo`, `CONTINGENCIA=on`, hosts, os dois tokens), subida, logs, migração do servidor antigo, rollback e recuperação do token do ML. É o mesmo `docker-compose.yml` local e no servidor: o que muda é só o `.env`.
+Siga **[docs/deploy.md](docs/deploy.md)**. O servidor **não precisa do código**: o CI publica as imagens (`api`, `painel`, `proxy`) no GitHub Container Registry a cada merge na `main`, e no servidor ficam só o `docker-compose.yml`, o `.env`, o `config.yml`, a chave e a pasta `data/`. Para atualizar: `docker compose pull && docker compose up -d`. Para voltar uma versão: `MONITOR_VERSAO=sha-<commit>` no `.env`.
 
 ## Problemas comuns
 

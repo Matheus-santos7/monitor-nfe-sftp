@@ -45,7 +45,7 @@ cd monitoramento && npm ci
 
 ## Checklist do PR
 
-- [ ] `cd monitoramento && npm run check` passa. O CI roda o mesmo, mais a sintaxe do JS do painel e o `docker compose config`.
+- [ ] `cd monitoramento && npm run check` passa. O CI roda o mesmo, mais a sintaxe do JS do painel, o `docker compose config` e a compilação das 3 imagens. Depois do merge na `main`, o CI **publica** as imagens no GHCR (`latest` e `sha-<commit>`), e o servidor atualiza com `docker compose pull && docker compose up -d`.
 - [ ] A mudança de regra ou de texto tem teste.
 - [ ] Testei localmente com `docker compose up` (agenda em **sombra**, contingência **off**), e com `FAKE_NOTA` se mexi no fluxo de furo.
 - [ ] Atualizei a documentação da camada que mudou ([docs/README.md](README.md)). Variável nova no `.env.example` (com comentário) e no `docker-compose.yml`.

@@ -51,32 +51,47 @@ Ninguém recebe token no link. Cada pessoa tem a própria conta, criada com `nod
 
 ## 1. Instalação no servidor (primeira vez)
 
-```bash
-ssh <servidor>
-git clone <repositório> monitor-nfe && cd monitor-nfe
-cp -n .env.example .env && chmod 600 .env
-cp -n monitoramento/config.example.yml monitoramento/config.yml
-mkdir -p secrets && cp <bastion.pem> secrets/bastion.pem && chmod 600 secrets/bastion.pem
+O servidor **não precisa do código**: as imagens (`api`, `painel`, `proxy`) são publicadas pelo CI no GitHub Container Registry a cada merge na `main`, e o servidor só as baixa. Na pasta do servidor ficam apenas estes arquivos:
+
+```
+monitor-nfe/
+├── docker-compose.yml          # baixado do repositório (é o único arquivo do projeto)
+├── .env                        # segredos e configuração (chmod 600)
+├── monitoramento/
+│   ├── config.yml              # cliente, SFTP, séries
+│   └── data/                   # histórico, token do ML em uso, trava da contingência
+└── secrets/
+    └── bastion.pem             # chave SSH do Nerus (chmod 600)
 ```
 
-No `.env`, além das credenciais (ML, Nerus, SFTP no `config.yml`, canais de aviso):
+```bash
+ssh <servidor>
+mkdir -p ~/monitor-nfe/monitoramento/data ~/monitor-nfe/secrets && cd ~/monitor-nfe
+curl -fsSLO https://raw.githubusercontent.com/Matheus-santos7/monitor-nfe-sftp/main/docker-compose.yml
+```
+
+Vindo da sua máquina, que hoje é a produção, siga a **seção 4 (migração)**: ela traz o `.env`, o `config.yml`, a chave e o `data/`. Numa instalação do zero, use o `.env.example` e o `config.example.yml` do repositório como modelo.
+
+No `.env` do servidor, além das credenciais (ML, Nerus, canais de aviso):
 
 ```
 MODO_AGENDA=ativo
 CONTINGENCIA=on
 PAINEL_HOST=monitor.seusetor.com.br
 API_HOST=api-monitor.seusetor.com.br
+MONITOR_VERSAO=latest                       # ou uma versão fixa, ex.: sha-531971d (ver seção 5)
 MONITOR_HTTP_TOKEN=<openssl rand -hex 32>   # Bearer da API, só scripts do time técnico
 SESSAO_SEGREDO=<openssl rand -hex 32>       # assina o cookie de login
-PAINEL_USUARIOS=                            # preenchido na seção 3 (uma linha por pessoa, separadas por vírgula)
+PAINEL_USUARIOS=                            # contas (seção 3), separadas por vírgula
 ```
 
-Se estiver vindo de outro servidor, faça antes a **seção 4 (migração)**.
+**Se as imagens estiverem privadas** no GitHub (Packages), faça uma vez no servidor: `docker login ghcr.io -u <usuario-github>`, usando um token com permissão só `read:packages`. Se estiverem públicas, nada é preciso.
 
 ## 2. Subir e verificar
 
 ```bash
-docker compose up -d --build
+docker compose pull               # baixa as imagens da versão MONITOR_VERSAO
+docker compose up -d
 docker compose ps                 # api, painel e proxy "running" / "healthy"
 docker compose logs -f            # Ctrl+C sai sem parar nada
 ```
@@ -103,7 +118,9 @@ Crie as contas (seção 3), abra `https://PAINEL_HOST` e entre com uma conta `op
 | Ver os logs ao vivo | `docker compose logs -f`, ou só um serviço: `docker compose logs -f api` |
 | Ver a última hora | `docker compose logs --since 1h api` |
 | Ver o estado dos containers | `docker compose ps` |
-| Atualizar para uma versão nova | `git pull && docker compose up -d --build` |
+| **Atualizar para uma versão nova** (depois do merge na `main` e do CI verde) | `docker compose pull && docker compose up -d`. Só os containers com imagem nova são recriados |
+| Ver qual versão está rodando | `docker compose images` (a coluna TAG) ou `docker inspect monitor-api --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'` (o commit) |
+| Atualizar o `docker-compose.yml` (raro; quando o PR mexer nele) | `curl -fsSLO https://raw.githubusercontent.com/Matheus-santos7/monitor-nfe-sftp/main/docker-compose.yml && docker compose up -d` |
 | Aplicar uma mudança no `.env` | `docker compose up -d --force-recreate api` (ou `proxy`, se mudou `PAINEL_HOST`/`API_HOST`) |
 | Aplicar uma mudança no `config.yml` (ex.: série nova) | `docker compose restart api` |
 | Pausar o monitor (manutenção do gateway) | `MODO_AGENDA=off` no `.env` e recriar a `api`. O painel continua mostrando o estado |
@@ -117,24 +134,33 @@ Crie as contas (seção 3), abra `https://PAINEL_HOST` e entre com uma conta `op
 
 Os logs giram sozinhos: são 10 MB × 5 arquivos por serviço.
 
-## 4. Migração do servidor antigo para a AWS
+## 4. Migração da sua máquina para o servidor AWS
 
-A ordem existe por causa do token do ML de uso único e da contingência.
+Hoje a produção roda na sua máquina. É nela que estão o token do ML em uso, a trava da contingência e o histórico. A ordem existe por causa do token do ML de uso único e da contingência.
 
-1. Confirme que o **IP da AWS está liberado** no SFTP do cliente e no bastion do Nerus. Se tiver acesso, teste antes, do servidor novo: `ssh` no bastion e `sftp` no cliente.
-2. **No servidor antigo, pare tudo:** `docker compose down`. Se ele ainda roda o n8n, desative também o workflow no editor antes. Com isso, nada mais renova o token nem agenda.
-3. Copie para o servidor novo, por exemplo com `scp -r`: o `.env`, o `monitoramento/config.yml`, a chave do bastion e a **pasta `monitoramento/data/` inteira**. Ela contém o `ml-tokens.json` (o token do ML **atual**, com prioridade sobre o `.env`), o `contingencias.json` e o `historico/`.
-4. No `.env` novo, acrescente as variáveis da seção 1 (`MODO_AGENDA`, `CONTINGENCIA`, hosts, `SESSAO_SEGREDO`, `PAINEL_USUARIOS`). **Gere um `MONITOR_HTTP_TOKEN` novo**: o antigo passou por URL (links com `?token=`) e deve ser considerado vazado. Tire o `PAINEL_TOKEN`, se existir. Tire `COMPOSE_FILE` e as variáveis `N8N_*`, `POSTGRES_*` e de domínio do Traefik, se existirem.
-5. Suba e verifique (seção 2).
-6. Mantenha o servidor antigo **parado** por uma semana, para rollback. Não o ligue junto com o novo.
+1. Confirme no servidor: **IP fixo**, Security Group (80/443), os dois registros DNS A apontando para ele, e **o IP liberado no SFTP do cliente e no bastion do Nerus**. Se der, teste do servidor: `ssh -i bastion.pem ec2-user@<bastion> exit`.
+2. **Na sua máquina, pare tudo:** `docker compose down`. Daqui em diante, nada renova o token nem agenda ciclos ali.
+3. Copie da sua máquina para o servidor:
+   ```bash
+   cd ~/Projetos/monitor-nfe-sftp
+   scp .env <servidor>:~/monitor-nfe/.env
+   scp monitoramento/config.yml <servidor>:~/monitor-nfe/monitoramento/config.yml
+   scp secrets/bastion.pem <servidor>:~/monitor-nfe/secrets/bastion.pem
+   scp -r monitoramento/data/. <servidor>:~/monitor-nfe/monitoramento/data/
+   ssh <servidor> 'chmod 600 ~/monitor-nfe/.env ~/monitor-nfe/secrets/bastion.pem'
+   ```
+   A pasta `data/` é obrigatória: o `ml-tokens.json` tem o token do ML **atual**, com prioridade sobre o `.env`. Sem ele, o servidor sobe com um token que já não vale.
+4. No `.env` do servidor, troque `PAINEL_HOST` e `API_HOST` pelos DNS reais. O resto (contas, `SESSAO_SEGREDO`, `MODO_AGENDA=ativo`, `CONTINGENCIA=on`) já vem pronto da sua máquina.
+5. Suba e verifique (seção 2). As contas e as senhas do painel continuam as mesmas.
+6. **Não religue a sua máquina** com `MODO_AGENDA=ativo`. Para desenvolver nela, tire `MODO_AGENDA` e `CONTINGENCIA` do `.env` local (volta a ser sombra/off) e use outro `ML_REFRESH_TOKEN`, ou deixe vazio.
 
 ## 5. Rollback
 
-- **Para uma versão anterior no mesmo servidor:** `git checkout <commit anterior> && docker compose up -d --build`.
-- **De volta ao servidor antigo:**
-  1. `docker compose down` na AWS.
-  2. Copie de volta a `monitoramento/data/` da AWS para o antigo. O token do ML girou na AWS, e o antigo tem um token morto.
-  3. Suba o antigo.
+- **Para a versão anterior:** cada merge publica também uma tag `sha-<commit>`. No `.env`, coloque `MONITOR_VERSAO=sha-<commit anterior>` (veja as versões em GitHub → Packages) e rode `docker compose pull && docker compose up -d`. Para voltar a acompanhar a `main`: `MONITOR_VERSAO=latest`.
+- **De volta para a sua máquina:**
+  1. `docker compose down` no servidor.
+  2. Copie a `monitoramento/data/` do servidor de volta para a sua máquina, porque o token do ML girou no servidor.
+  3. Suba na sua máquina.
 
 ## 6. O token do Mercado Livre morreu
 
