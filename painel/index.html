@@ -36,6 +36,14 @@
   .saudavel { color:var(--ok); } .atencao { color:var(--al); } .critico { color:var(--er); }
   select { font:inherit; padding:5px 8px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--tx); }
   .linhah2 { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .avisos { margin:0; border:1px solid var(--bd); border-top:0; border-radius:0 0 10px 10px; background:var(--card); font-size:14px; }
+  .banner.com-avisos { border-radius:10px 10px 0 0; }
+  details { margin-top:24px; }
+  summary { cursor:pointer; font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); font-weight:600; padding:4px 0; }
+  details > .card, details > h3 + .card, details > .linhah2 { margin-top:8px; }
+  h3 { font-size:13px; color:var(--mut); margin:16px 0 6px; }
+  .erro-exec { color:var(--er); font-size:14px; margin:8px 0 0; }
+  .erro-exec:empty { display:none; }
   .pag { display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-top:8px; font-size:13px; }
   .pag[hidden] { display:none; }
   button:disabled { opacity:.5; cursor:not-allowed; }
@@ -65,26 +73,29 @@
     <span class="mut"><span id="checado">—</span> · <button id="recarregar" type="button">Atualizar</button> · <span id="quem"></span> <button id="sair" type="button">Sair</button></span>
   </header>
   <div id="banner" class="banner aguardando" role="status" aria-live="polite">Carregando…</div>
-
-  <div class="linhah2"><h2>Ciclo de monitoramento</h2><button id="executar" type="button" hidden>Executar agora</button></div>
-  <div class="card"><ul id="ciclo"></ul></div>
-
-  <section id="sec-avisos" hidden>
-    <h2>Avisos</h2>
-    <div class="card"><ul id="avisos"></ul></div>
-  </section>
+  <ul id="avisos" class="avisos" hidden></ul>
 
   <h2>Notas ausentes no FTP</h2>
-  <div class="card"><table><thead><tr><th>NF / série</th><th>Ausente desde</th><th>Há</th></tr></thead><tbody id="ausentes"></tbody></table><div class="pag" id="pag-ausentes" hidden></div></div>
+  <div class="card"><table><thead><tr><th>NF / série</th><th>Situação</th><th>Ausente desde</th><th>Há</th></tr></thead><tbody id="ausentes"></tbody></table><div class="pag" id="pag-ausentes" hidden></div></div>
 
   <div class="linhah2"><h2>Saúde do dia</h2><label class="mut">Dia <select id="dia"></select></label></div>
   <div class="card"><div class="kpis" id="kpis"></div></div>
 
-  <h2>Histórico de avisos do dia</h2>
-  <div class="card"><table><thead><tr><th>Hora</th><th>Evento</th><th>Detalhe</th></tr></thead><tbody id="eventos"></tbody></table><div class="pag" id="pag-eventos" hidden></div></div>
+  <details id="sec-historico">
+    <summary>Histórico do dia</summary>
+    <div class="card"><table><thead><tr><th>Hora</th><th>Evento</th><th>Detalhe</th></tr></thead><tbody id="eventos"></tbody></table><div class="pag" id="pag-eventos" hidden></div></div>
+  </details>
 
-  <h2>Séries</h2>
-  <div class="card"><table><thead><tr><th>Série</th><th>XMLs no FTP</th><th>FTP</th><th>Teto ML</th><th>Última ML no FTP</th><th>Ausentes</th></tr></thead><tbody id="series"></tbody></table><div class="pag" id="pag-series" hidden></div></div>
+  <details id="sec-op" hidden>
+    <summary>Operação</summary>
+    <div class="linhah2"><h3>Ciclo de monitoramento</h3><button id="executar" type="button">Executar agora</button></div>
+    <p id="erro-exec" class="erro-exec" role="alert"></p>
+    <div class="card"><ul id="ciclo"></ul></div>
+    <h3>Indicadores do dia</h3>
+    <div class="card"><div class="kpis" id="kpis-op"></div></div>
+    <h3>Séries</h3>
+    <div class="card"><table><thead><tr><th>Série</th><th>XMLs no FTP</th><th>FTP</th><th>Teto ML</th><th>Última ML no FTP</th><th>Ausentes</th></tr></thead><tbody id="series"></tbody></table><div class="pag" id="pag-series" hidden></div></div>
+  </details>
 </main>
 <script>
   // Sessão em cookie HttpOnly (o JS nunca vê nada secreto). X-Painel: 1 = prova de que a chamada é deste painel (CSRF).
@@ -137,14 +148,25 @@
     $("cliente").textContent = s.cliente ? s.cliente.nome + " · Conta " + s.cliente.conta : "Painel NF-e SFTP";
     document.title = (s.status === "ok" ? "✅" : s.status === "aguardando" ? "⏳" : "⚠️") + " Painel NF-e SFTP";
     const r = s.resultado;
-    const faltam = r ? r.notasAusentes.length : 0;
+    const desdeDe = s.ausentesDesde || {};
+    const notas = (r && r.notasAusentes || []).map((n) => {
+      const desde = desdeDe[n.numero + "/" + n.serie];
+      return { n, desde, m: desde ? minDesde(desde) : 0 };
+    });
+    const furos = notas.filter((x) => x.m >= VELHO_MIN).length;
+    const transito = notas.length - furos;
+    const fraseAlerta = furos
+      ? furos + " nota(s) ausente(s) no FTP há mais de " + VELHO_MIN + " min" + (transito ? " · " + transito + " em trânsito" : "")
+      : transito
+        ? transito + " nota(s) em trânsito — normal até " + VELHO_MIN + " min"
+        : "Série sem XML no FTP — veja os avisos";
     const msg = {
-      ok: "Tudo integrado — última NF do ML está no FTP e não há furos",
-      alerta: faltam + " nota(s) ausente(s) no FTP",
+      ok: "Tudo integrado — nenhuma nota faltando no FTP",
+      alerta: fraseAlerta,
       erro: s.erro ? "Checagem falhou: " + s.erro : "Checagem incompleta — veja os avisos",
       aguardando: "Aguardando a primeira checagem…",
-    }[s.status];
-    $("banner").className = "banner " + s.status;
+    }[s.status] || "Estado desconhecido: " + s.status;
+    $("banner").className = "banner " + (["ok", "alerta", "erro", "aguardando"].includes(s.status) ? s.status : "erro");
     $("banner").textContent = msg;
 
     const atraso = s.checadoEm ? minDesde(s.checadoEm) : null;
@@ -155,19 +177,26 @@
     const avisos = [...(s.avisos || [])];
     if (s.erro && r) avisos.unshift("Última checagem falhou (" + s.erro + "); dados abaixo são de antes.");
     if (atraso != null && s.intervaloMin && atraso > s.intervaloMin * 3) avisos.unshift("Monitor sem checar há " + idade(atraso) + " — verifique o container.");
-    $("sec-avisos").hidden = !avisos.length; // sem aviso, a seção some
+    // avisos ficam colados no banner (um só bloco de status); sem aviso, somem
+    $("avisos").hidden = !avisos.length;
+    $("banner").classList.toggle("com-avisos", avisos.length > 0);
     $("avisos").replaceChildren(...avisos.map(item));
 
-    const aus = r ? r.notasAusentes.map((n) => {
-      const desde = s.ausentesDesde[n.numero + "/" + n.serie];
-      const m = desde ? minDesde(desde) : 0;
-      return linha([n.numero + " / " + n.serie, desde ? hora(desde) : "—", desde ? idade(m) : "—"], m >= VELHO_MIN ? "velho" : "");
-    }) : [];
-    paginar("ausentes", aus, linha(["Nenhuma", "", ""]));
+    // situação em texto, não só cor: "furo" passou da tolerância; "em trânsito" ainda pode chegar
+    const aus = notas.map(({ n, desde, m }) => linha([
+      n.numero + " / " + n.serie,
+      m >= VELHO_MIN ? "⚠️ furo" : "⏳ em trânsito",
+      desde ? hora(desde) : "—",
+      desde ? idade(m) : "—",
+    ], m >= VELHO_MIN ? "velho" : ""));
+    paginar("ausentes", aus, linha(["Nenhuma", "", "", ""]));
 
+    const op = s.permissao === "operacao";
+    $("sec-op").hidden = !op; // ciclo, executar, indicadores técnicos e séries: só operação
+    if (!op) return;
     renderCiclo(s.ciclo);
 
-    paginar("series", r ? r.series.map((x) => linha([
+    paginar("series", r && r.series ? r.series.map((x) => linha([
       String(x.serie),
       x.totalAusentes === -1 ? "0" : String(x.total),
       x.totalAusentes === -1 ? "—" : x.min + " → " + x.max,
@@ -193,20 +222,20 @@
         (u.erro ? " · " + u.etapaFalha + ": " + u.erro : ""));
     } else if (c.modo !== "off") linhas.push("Nenhum ciclo rodou desde que o monitor subiu.");
     $("ciclo").replaceChildren(...linhas.map(item));
-    $("executar").hidden = ultimo?.permissao !== "operacao"; // conta de leitura (time/cliente) não opera
     $("executar").disabled = c.modo === "off" || c.emAndamento;
     $("executar").title = c.modo === "off" ? "Com MODO_AGENDA=off o monitor está pausado" : c.emAndamento ? "Já há um ciclo em andamento" : "";
   }
   $("executar").onclick = async () => {
     const real = ultimo && ultimo.ciclo && ultimo.ciclo.modo === "ativo";
     if (!confirm(real ? "Rodar o ciclo agora? Pode disparar contingência real e enviar avisos." : "Rodar o ciclo agora em modo sombra (sem contingência, sem avisos)?")) return;
+    $("erro-exec").textContent = "";
     try {
       const resp = await fetch("/ciclo/agora", { ...auth, method: "POST" });
       if (resp.status === 401) return mostrarLogin("Sua sessão expirou. Entre de novo.");
       const r = await resp.json();
       if (!resp.ok) throw new Error(r.erro || "HTTP " + resp.status);
     } catch (e) {
-      $("ciclo").prepend(item("Não iniciou: " + e.message));
+      $("erro-exec").textContent = "Não iniciou: " + e.message; // fora da lista do ciclo: o refresh não apaga
     }
     carregar();
   };
@@ -222,22 +251,32 @@
     el.append(b, sp); return el;
   }
   let diaEscolhido = "";
+  let pedidoHistorico = 0;
+  let diasMostrados = "";
   async function carregarHistorico() {
+    const pedido = ++pedidoHistorico; // resposta atrasada de um pedido antigo não sobrescreve o dia escolhido
     try {
       const resp = await fetch("/historico" + (diaEscolhido ? "?dia=" + diaEscolhido : ""), auth);
       const h = await resp.json();
+      if (pedido !== pedidoHistorico) return;
       if (!resp.ok) throw new Error(h.erro || "HTTP " + resp.status);
       const dias = h.dias.includes(h.dia) ? h.dias : [h.dia, ...h.dias];
-      $("dia").replaceChildren(...dias.map((d) => { const o = new Option(fmtDia(d), d); o.selected = d === h.dia; return o; }));
+      if (dias.join() !== diasMostrados) { // só recria a lista se mudou (não fecha o seletor na mão do usuário)
+        diasMostrados = dias.join();
+        $("dia").replaceChildren(...dias.map((d) => new Option(fmtDia(d), d)));
+      }
+      $("dia").value = h.dia;
       const r = h.resumo;
       $("kpis").replaceChildren(...(r ? [
-        kpi(NIVEL[r.nivel], "Saúde", r.nivel),
-        kpi(r.saudePct == null ? "—" : r.saudePct + "%", "Checagens OK (" + h.checagens.ok + "/" + h.checagens.total + ")"),
+        kpi(NIVEL[r.nivel] || r.nivel, "Saúde", r.nivel),
         kpi(String(r.furosAbertos), "Furos no dia"),
-        kpi(String(r.furosResolvidos), "Resolvidos"),
         kpi(String(r.abertosAgora), "Em aberto" + (r.maisAntigoMin != null ? " (mais antigo " + idade(r.maisAntigoMin) + ")" : ""), r.abertosAgora ? "critico" : ""),
-        kpi(min(r.resolucaoMediaMin), "Tempo médio p/ chegar ao FTP"),
         kpi(min(r.resolucaoMaxMin), "Pior tempo p/ chegar ao FTP"),
+      ] : [kpi("—", "Sem checagens neste dia")]));
+      $("kpis-op").replaceChildren(...(r ? [
+        kpi(r.saudePct == null ? "—" : r.saudePct + "%", "Checagens OK (" + h.checagens.ok + "/" + h.checagens.total + ")"),
+        kpi(String(r.furosResolvidos), "Resolvidos"),
+        kpi(min(r.resolucaoMediaMin), "Tempo médio p/ chegar ao FTP"),
         kpi(String(r.falhasChecagem), "Falhas de checagem", r.falhasChecagem ? "atencao" : ""),
       ] : [kpi("—", "Sem checagens neste dia")]));
       const evs = (h.eventos || []).slice().reverse().map((e) => linha([
@@ -246,7 +285,9 @@
       ]));
       paginar("eventos", evs, linha(["", "Nenhuma ocorrência neste dia", ""]));
     } catch (e) {
+      if (pedido !== pedidoHistorico) return;
       $("eventos").replaceChildren(linha(["", "Histórico indisponível", e.message]));
+      $("kpis").replaceChildren(kpi("—", "Histórico indisponível: " + e.message));
     }
   }
   $("dia").onchange = (ev) => { diaEscolhido = ev.target.value; carregarHistorico(); };

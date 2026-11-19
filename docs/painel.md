@@ -28,18 +28,16 @@ Errar a senha 5 vezes em 15 min, do mesmo IP, bloqueia aquele usuário por 15 mi
 
 ## Como ler cada parte
 
-### Ciclo de monitoramento
-
-Mostra o modo da agenda (desligada, sombra ou ativa), o próximo horário, a etapa em andamento ("confere às 10:42") e o último ciclo: origem, status, quantos avisos e se algum ficou **sem entrega** em nenhum canal.
-
-O botão **Executar agora** roda o ciclo completo na hora. Ele pede confirmação, e em `ativo` pode disparar contingência real. Fica desligado com `MODO_AGENDA=off` ou com um ciclo em andamento.
+A tela, de cima para baixo: **status** (faixa com os avisos colados), **notas ausentes**, **saúde do dia**, **histórico do dia** (recolhido) e **operação** (recolhido, só para a conta `operacao`).
 
 ### Faixa de status
 
 | Cor / status | Texto | Significa | O que fazer |
 |---|---|---|---|
-| Verde `ok` | "Tudo integrado — última NF do ML está no FTP e não há furos" | Tudo certo **e** a checagem está completa | Nada |
-| Laranja `alerta` | "N nota(s) ausente(s) no FTP" | Há furo | Veja a tabela de ausentes. O ciclo diagnostica na próxima hora cheia, ou use **Executar agora** |
+| Verde `ok` | "Tudo integrado — nenhuma nota faltando no FTP" | Tudo certo **e** a checagem está completa | Nada |
+| Laranja `alerta` | "N nota(s) ausente(s) no FTP há mais de 20 min · M em trânsito" | Há furo | Veja a tabela de ausentes |
+| Laranja `alerta` | "N nota(s) em trânsito — normal até 20 min" | Só atraso normal de integração | Nada ainda; vira furo se passar da tolerância |
+| Laranja `alerta` (antigo) | "N nota(s) ausente(s) no FTP" | Há furo | Veja a tabela de ausentes. O ciclo diagnostica na próxima hora cheia, ou use **Executar agora** |
 | Vermelho `erro` | "Checagem falhou: …" | O SFTP ou a checagem quebrou | Veja o log do monitor |
 | Vermelho `erro` | "Checagem incompleta — veja os avisos" | Cobertura degradada (ex.: sem teto do ML) | Leia **Avisos**. Pode haver furo que o monitor não está vendo |
 | Cinza `aguardando` | "Aguardando a primeira checagem…" | O monitor acabou de subir | Espere um ciclo |
@@ -47,7 +45,7 @@ O botão **Executar agora** roda o ciclo completo na hora. Ele pede confirmaçã
 
 ### Avisos
 
-Motivos de cobertura parcial ou problema de configuração:
+Aparecem colados embaixo da faixa de status (somem quando não há nenhum). Motivos de cobertura parcial ou problema de configuração:
 
 - "Teto ML indisponível: …": a API do ML falhou ou devolveu 429.
 - "Credenciais ML ausentes": o monitor está usando só o FTP como referência.
@@ -56,11 +54,11 @@ Motivos de cobertura parcial ou problema de configuração:
 
 ### Notas ausentes no FTP
 
-NF/série, **ausente desde** (a primeira checagem que viu o furo) e **há quanto tempo**. A linha fica **vermelha a partir de 15 min**: até aí pode ser só a latência normal de envio; depois disso é atraso real.
+NF/série, **situação** (⏳ em trânsito ou ⚠️ furo), **ausente desde** (a primeira checagem que viu a nota faltar) e **há quanto tempo**. A partir da tolerância (`TOLERANCIA_MIN`, padrão 20 min) a nota vira **furo** e a linha fica vermelha. 10 linhas por página.
 
 ### Saúde do dia
 
-Um seletor permite escolher o dia; o padrão é hoje.
+Um seletor permite escolher o dia; o padrão é hoje. Todos veem Saúde, Furos no dia, Em aberto e Pior tempo; os demais indicadores ficam na seção **Operação**.
 
 | KPI | Cálculo |
 |---|---|
@@ -72,7 +70,7 @@ Um seletor permite escolher o dia; o padrão é hoje.
 
 Em um dia que já passou, a idade dos furos é medida na última checagem daquele dia, não "agora".
 
-### Histórico de avisos do dia
+### Histórico do dia (recolhido)
 
 Um evento só é gravado quando o estado **muda**. Uma checagem igual à anterior não gera linha.
 
@@ -94,3 +92,15 @@ Por série: XMLs no FTP, faixa no FTP (min–max), teto do ML, se a última do M
 - **Histórico:** `monitoramento/data/historico/AAAAMMDD.json`, um arquivo por dia no fuso America/Sao_Paulo. A gravação é atômica (arquivo temporário + rename). Os furos abertos passam para o arquivo do dia seguinte à meia-noite.
 - **Arquivo corrompido:** é movido para `AAAAMMDD.json.corrompido-<ms>`, e o dia recomeça. A checagem não para.
 - **Retenção:** não há limpeza automática. Cada arquivo tem poucos KB; apague os antigos à mão se precisar.
+
+### Operação (só conta `operacao`, recolhida)
+
+#### Ciclo de monitoramento
+
+Mostra o modo da agenda (desligada, sombra ou ativa), o próximo horário, a etapa em andamento ("confere às 10:42") e o último ciclo: origem, status, quantos avisos e se algum ficou **sem entrega** em nenhum canal.
+
+O botão **Executar agora** roda o ciclo completo na hora. Ele pede confirmação, e em `ativo` pode disparar contingência real. Fica desligado com `MODO_AGENDA=off` ou com um ciclo em andamento.
+
+Se o **Executar agora** falhar, o motivo fica escrito em vermelho embaixo do título até a próxima tentativa.
+
+Também estão aqui os indicadores técnicos do dia (checagens OK, resolvidos, tempo médio, falhas) e a tabela de **Séries**.
