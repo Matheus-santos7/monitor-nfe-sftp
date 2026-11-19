@@ -6,6 +6,7 @@ import { contingenciaLigada } from "./ciclo.js";
 import { canaisDoAmbiente } from "./avisos.js";
 import { configurarAgenda, depsOrquestradorReais, dispararCiclo, modoAgenda } from "./orquestrador.js";
 import { statusPainel } from "./job.js";
+import { iniciarBanco } from "./db.js";
 import { diasDoPeriodo, inicioPeriodo, resumoPeriodo } from "./resumo.js";
 
 const AGENDA_PADRAO = "0 8-18 * * 1-5"; // seg–sex, de hora em hora, 8h–18h
@@ -13,6 +14,7 @@ const AGENDA_PADRAO = "0 8-18 * * 1-5"; // seg–sex, de hora em hora, 8h–18h
 function main(): void {
   const config = carregarConfig();
   retomarHistorico();
+  void iniciarBanco(); // não espera: banco lento/fora não atrasa a subida nem o ciclo
   iniciarHttp(config);
   console.log(
     contingenciaLigada()

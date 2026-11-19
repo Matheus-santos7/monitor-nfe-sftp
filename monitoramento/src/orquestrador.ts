@@ -5,6 +5,7 @@ import { canaisDoAmbiente, enviarAviso, type ResultadoEnvio } from "./avisos.js"
 import { registrarEventoAviso } from "./job.js";
 import type { Mensagem } from "./relatorio.js";
 import { deveAvisar, paraChat } from "./resumo.js";
+import { bancoCiclo } from "./db.js";
 import type { AppConfig } from "./types.js";
 
 /** off = pausado · sombra = roda sem contingência e sem enviar avisos · ativo = produção. */
@@ -109,6 +110,7 @@ export async function executarCicloCompleto(
   let etapaFalha: string | null = null;
   let erro: string | null = null;
   let mensagens: Mensagem[] = [];
+  let cliente = "?";
   const etapa = (nome: string) => {
     estado.etapa = nome;
     return nome;
@@ -127,6 +129,7 @@ export async function executarCicloCompleto(
     const ignorarTolerancia = origem === "agenda" && horaSaoPaulo(deps.agora()) >= HORA_ULTIMO_CICLO;
     const r = await deps.ciclo(execucao, { contingencia: !sombra, ignorarTolerancia });
     status = r.status;
+    cliente = r.identificador || cliente;
     // mensagem do próprio ciclo (resumo ok / cobertura parcial): só quando muda de estado — sem "100% OK" de hora em hora
     mensagens = deveAvisar(r.status, anterior) ? r.mensagens : [];
     if (r.lote.length) {
@@ -180,6 +183,7 @@ export async function executarCicloCompleto(
     mensagens: mensagens.length,
     semEntrega,
   };
+  bancoCiclo(cliente, resumo);
   console.log(`▶ Ciclo ${execucao}${sombra ? " [sombra]" : ""}: ${status}, ${mensagens.length} aviso(s)${semEntrega ? `, ${semEntrega} sem entrega` : ""}`);
   return resumo;
 }
