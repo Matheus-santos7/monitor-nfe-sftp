@@ -5,18 +5,18 @@ O projeto inteiro sobe com **um** `docker-compose.yml` e é acompanhado com `doc
 ## Como está montado
 
 ```
-Internet ── 443/80 ──► proxy (Caddy, HTTPS automático)
-                          ├─ https://PAINEL_HOST ──► painel (nginx)  ── /status, /historico, /ciclo/agora ──► api
-                          └─ https://API_HOST    ──► api (Node)      ── SFTP, Mercado Livre, Nerus, avisos
+Internet ── 443/80 ──► proxy do servidor (já existente: nginx/Traefik…, ou o nosso Caddy)
+                          ├─ https://PAINEL_HOST ──► 127.0.0.1:9080 painel (nginx) ── /status, /historico, /ciclo/agora ──► api
+                          └─ https://API_HOST    ──► 127.0.0.1:9081 api (Node)     ── SFTP, Mercado Livre, Nerus, avisos
 ```
 
 | Serviço | Container | Porta no servidor | Papel |
 |---|---|---|---|
-| `api` | `monitor-api` | `127.0.0.1:8081` (`API_PORTA`) | Backend: API, agenda do ciclo, avisos |
-| `painel` | `monitor-painel` | `127.0.0.1:8080` (`PAINEL_PORTA`) | Frontend: painel e histórico |
-| `proxy` | `monitor-proxy` | `80` e `443`, públicas | HTTPS e um DNS por serviço |
+| `api` | `monitor-api` | `127.0.0.1:9081` | Backend: API, agenda do ciclo, avisos |
+| `painel` | `monitor-painel` | `127.0.0.1:9080` | Frontend: painel e histórico |
+| `proxy` (opcional) | `monitor-proxy` | `80` e `443` | HTTPS próprio. **Desligado** no servidor compartilhado (seção 1b) |
 
-As portas 8080 e 8081 só aceitam conexão do próprio servidor (para `curl` ou túnel SSH). De fora, o acesso é sempre pelo proxy, com HTTPS.
+As portas 9080 e 9081 só aceitam conexão do próprio servidor. De fora, o acesso é sempre pelos DNS, com HTTPS, através do proxy do servidor.
 
 **Quem acessa o quê:**
 
@@ -35,8 +35,9 @@ Ninguém recebe token no link. Cada pessoa tem a própria conta, criada com `nod
 | Servidor Linux com Docker Engine e o plugin compose v2 (`docker compose version`) | Roda tudo |
 | **IP fixo (Elastic IP)** no servidor | DNS e liberação de IP |
 | **Esse IP liberado no SFTP do cliente e no bastion SSH do Nerus** | Esses dois costumam aceitar só IPs conhecidos. Sem liberação, o monitor não lista os XMLs nem diagnostica |
-| Dois registros DNS do tipo A, `PAINEL_HOST` e `API_HOST`, apontando para o IP | O Caddy só emite o certificado se o nome já resolver para o servidor |
-| Security Group: entrada **80 e 443** (de qualquer lugar, se o cliente acessa de fora); **22** só da rede do setor. **Não** abra 8080/8081 | HTTPS público; o resto fechado |
+| Dois registros DNS do tipo A, `PAINEL_HOST` e `API_HOST`, apontando para o IP do servidor (DNS não tem porta) | O certificado só é emitido se o nome já resolver para o servidor |
+| Security Group: entrada **80 e 443** (de qualquer lugar, se o cliente acessa de fora; normalmente já abertas no servidor compartilhado); **22** só da rede do setor. **Não** abra 9080/9081 | HTTPS público; o resto fechado |
+| Acesso para editar o proxy que já existe no servidor (seção 1b) | É ele que publica os dois DNS |
 | Saída liberada: 443 (Mercado Livre, Let's Encrypt, Nerus API, webhooks), 22 (SFTP e bastion), 587/465 (SMTP) | O monitor fala com tudo isso |
 | O `.env`, o `config.yml`, a chave `bastion.pem` e a pasta `monitoramento/data/` do servidor atual | Credenciais, histórico e o token do ML em uso |
 
@@ -47,7 +48,7 @@ Ninguém recebe token no link. Cada pessoa tem a própria conta, criada com `nod
 - **Nunca crie conta `operacao` para o cliente.** Para ele, só `leitura`. E nunca mande o `MONITOR_HTTP_TOKEN` para ninguém de fora do time técnico.
 - **Nunca compartilhe uma conta entre pessoas.** O log registra quem entrou e quem apertou **Executar agora**.
 - **Nunca coloque `MODO_AGENDA=ativo` ou `CONTINGENCIA=on` fora do servidor.**
-- **Nunca abra 8080/8081 no Security Group.** Elas não têm HTTPS.
+- **Nunca abra 9080/9081 no Security Group.** Elas não têm HTTPS.
 
 ## 1. Instalação no servidor (primeira vez)
 
@@ -87,19 +88,161 @@ Preencha todos os `<…>` do arquivo:
 
 > O `docker-compose.yml` da raiz do repositório é o de **desenvolvimento** (usa `.env`, `config.yml` e compila o código). No servidor, use só o `servidor/docker-compose.yml`.
 
+## 1b. Servidor compartilhado (o proxy que já existe faz o HTTPS)
+
+No servidor compartilhado, as portas 80 e 443 já pertencem ao proxy das outras aplicações (nginx, Traefik, Apache…). Por isso o `servidor/docker-compose.yml` sobe só o **painel em `127.0.0.1:9080`** e a **API em `127.0.0.1:9081`**, e o proxy próprio (Caddy) fica desligado (`profiles: [proxy-proprio]`). Quem publica os dois DNS com HTTPS é o proxy que já existe:
+
+```
+https://PAINEL_HOST ──► proxy do servidor (443) ──► http://127.0.0.1:9080  (painel)
+https://API_HOST    ──► proxy do servidor (443) ──► http://127.0.0.1:9081  (api, só Bearer)
+```
+
+Para descobrir quem ocupa as portas: `sudo ss -tlnp | grep -E ':(80|443|9080|9081) '`. As portas 9080 e 9081 **não** devem ser abertas no Security Group: elas só aceitam conexão do próprio servidor.
+
+A configuração abaixo reproduz as proteções do nosso Caddy. **Não deixe de fora as linhas do `API_HOST`:** elas impedem o login e o cookie por esse endereço.
+
+**nginx** (ex.: `/etc/nginx/conf.d/monitor-nfe.conf`; o certificado é o que o servidor já usa, ex.: certbot):
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name monitor.seusetor.com.br;                 # = PAINEL_HOST
+  ssl_certificate     /etc/letsencrypt/live/monitor.seusetor.com.br/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/monitor.seusetor.com.br/privkey.pem;
+  add_header Strict-Transport-Security "max-age=86400" always;
+  client_max_body_size 16k;
+  location / {
+    proxy_pass http://127.0.0.1:9080;
+    proxy_set_header X-Forwarded-For $remote_addr;      # IP real (limite de login e auditoria)
+    proxy_set_header Host $host;
+  }
+}
+
+server {
+  listen 443 ssl;
+  server_name api-monitor.seusetor.com.br;             # = API_HOST
+  ssl_certificate     /etc/letsencrypt/live/api-monitor.seusetor.com.br/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/api-monitor.seusetor.com.br/privkey.pem;
+  add_header Strict-Transport-Security "max-age=86400" always;
+  client_max_body_size 16k;
+  location ~ ^/(login|logout|sessao)$ { return 404; }  # login só pelo painel
+  location / {
+    proxy_pass http://127.0.0.1:9081;
+    proxy_set_header Cookie "";                        # por aqui só Bearer, nunca sessão
+    proxy_set_header X-Real-IP "";
+  }
+}
+# HTTP → HTTPS (se o servidor ainda não tiver um redirecionamento geral)
+server { listen 80; server_name monitor.seusetor.com.br api-monitor.seusetor.com.br; return 301 https://$host$request_uri; }
+```
+
+Teste com `sudo nginx -t && sudo systemctl reload nginx`. Para emitir os certificados: `sudo certbot --nginx -d monitor.seusetor.com.br -d api-monitor.seusetor.com.br`.
+
+**Caddy** (se o proxy do servidor for um Caddy):
+
+```
+monitor.seusetor.com.br {
+	header Strict-Transport-Security "max-age=86400"
+	request_body { max_size 16KB }
+	reverse_proxy 127.0.0.1:9080
+}
+api-monitor.seusetor.com.br {
+	header Strict-Transport-Security "max-age=86400"
+	@sessao path /login /logout /sessao
+	respond @sessao 404
+	reverse_proxy 127.0.0.1:9081 {
+		header_up -Cookie
+		header_up -X-Real-IP
+	}
+}
+```
+
+**Load balancer da AWS (ALB) na frente** (o caso do servidor de implantação: `curl -sI https://<dns>` mostra `server: awselb/2.0`, e o DNS devolve vários IPs). O ALB faz o HTTPS, com o certificado do ACM, e encaminha cada nome para uma porta do servidor. Nesse caso:
+
+1. **Publique as portas para fora do container.** O ALB é outra máquina e não alcança `127.0.0.1`. No `docker-compose.yml` do servidor:
+   ```yaml
+   # api
+       ports:
+         - "9081:8080"
+   # painel
+       ports:
+         - "9080:80"
+   ```
+2. **Security Group da instância:** libere a entrada nas portas **9080 e 9081 só a partir do Security Group do ALB**, nunca de `0.0.0.0/0`. Sem HTTPS, essas portas não podem ficar abertas para a internet.
+3. **No ALB:** dois *target groups* apontando para a instância. Ajuste a regra de host do listener HTTPS (443) de cada um:
+
+   | Regra de host do listener | Target group | Porta | Health check |
+   |---|---|---|---|
+   | `PAINEL_HOST` | painel | 9080 | `GET /` → 200 |
+   | `API_HOST` | api | 9081 | `GET /health` → 200 |
+
+   O listener HTTP (80) redireciona para HTTPS (o padrão do ALB).
+4. **No `docker-compose.yml` do servidor,** `PAINEL_HOST` e `API_HOST` recebem os nomes reais do DNS. A proteção contra CSRF compara com o `PAINEL_HOST`, e o app reconhece o `API_HOST` pelo `Host` que o ALB repassa. Por esse endereço, o próprio app só aceita Bearer: o login, a sessão e o cookie ficam de fora, e o IP é a última entrada do `X-Forwarded-For`, que é a escrita pelo ALB. Nada disso depende de configurar o ALB.
+5. Não precisa do proxy próprio nem da rede de outro projeto. Deixe `networks: [monitor]` na `api` e no `painel`.
+
+O 502 do ALB quer dizer que o target está fora. Confira o health check do target group e se as portas estão publicadas fora do `127.0.0.1` (`sudo ss -tlnp | grep -E ':(9080|9081) '` deve mostrar `0.0.0.0`).
+
+**Caddy de outro projeto, em container** (o caso do servidor de implantação: `docker ps` mostra um `…-caddy-1` nas portas 80/443):
+
+1. Descubra a rede do Caddy e onde está o Caddyfile dele:
+   ```bash
+   docker inspect <container-caddy> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+   docker inspect <container-caddy> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+   ```
+2. No `docker-compose.yml` do monitor, ponha a `api` e o `painel` também nessa rede: descomente `proxy_servidor` em `networks:`, com o nome da rede, e use `networks: [monitor, proxy_servidor]` nos dois serviços. Suba com `docker compose up -d`.
+3. Faça uma cópia do Caddyfile do outro projeto (o arquivo do host, do passo 1) e **acrescente no fim** os dois blocos. Por aqui, o Caddy alcança o monitor pelo nome do container:
+   ```bash
+   cp <Caddyfile> <Caddyfile>.bak-$(date +%F)
+   cat >> <Caddyfile> <<'CADDY'
+
+   # --- Monitor NF-e ---
+   monitor.seusetor.com.br {
+   	header Strict-Transport-Security "max-age=86400"
+   	request_body {
+   		max_size 16KB
+   	}
+   	reverse_proxy monitor-painel:80
+   }
+   api-monitor.seusetor.com.br {
+   	header Strict-Transport-Security "max-age=86400"
+   	@sessao path /login /logout /sessao
+   	respond @sessao 404
+   	reverse_proxy monitor-api:8080 {
+   		header_up -Cookie
+   		header_up -X-Real-IP
+   	}
+   }
+   CADDY
+   ```
+   Use `cat >>`, que escreve no mesmo arquivo. Um editor que **substitui** o arquivo faz o container continuar vendo o Caddyfile antigo, porque o bind mount fica preso ao arquivo original.
+4. Valide e recarregue, **sem reiniciar** o outro sistema. O `reload` é sem queda, e com erro de configuração o Caddy mantém a anterior:
+   ```bash
+   docker exec <container-caddy> caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+   docker exec <container-caddy> caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+   docker logs --since 2m <container-caddy> 2>&1 | grep -iE "monitor|certificate|error"
+   ```
+   O Caddy emite o certificado dos dois nomes na hora, desde que os registros DNS já apontem para o servidor. Para desfazer: volte o `.bak` e rode o `reload` de novo.
+
+**Outro proxy em Docker** (Traefik ou nginx num container): `127.0.0.1` dentro dele não é o servidor. Duas saídas:
+- trocar `127.0.0.1` por `host.docker.internal` (com `extra_hosts: ["host.docker.internal:host-gateway"]` no proxy) e publicar as portas do monitor em `0.0.0.0:9080`/`0.0.0.0:9081`, deixando 9080/9081 fechadas no Security Group;
+- ou colocar o proxy na rede `monitor-nfe_monitor` e apontar para `painel:80` e `api:8080`.
+
+**Se nada usa 80/443 no servidor**, dá para usar o proxy próprio: apague a linha `profiles: [proxy-proprio]` do serviço `proxy` e rode `docker compose up -d`. Ele emite o HTTPS sozinho, e esta seção inteira deixa de ser necessária.
+
 ## 2. Subir e verificar
 
 ```bash
 docker compose pull               # baixa as imagens da versão MONITOR_VERSAO
 docker compose up -d
-docker compose ps                 # api, painel e proxy "running" / "healthy"
+docker compose ps                 # api e painel "running" / "healthy" (e proxy, se ligou o próprio)
 docker compose logs -f            # Ctrl+C sai sem parar nada
 ```
 
 O que precisa aparecer nos logs:
 
 - `monitor-api`: `monitor-sftp pronto`, `Contingência LIGADA` e `Agenda do ciclo ATIVA`. Não pode aparecer "nenhum canal de aviso configurado". Se aparecer "desligada" ou "SOMBRA", confira `CONTINGENCIA: "on"` e `MODO_AGENDA: ativo` no `docker-compose.yml`.
-- `monitor-proxy`: `certificate obtained successfully` para os dois nomes. Se aparecer um erro de ACME, o DNS ainda não aponta para o servidor, ou a porta 80/443 está fechada.
+- Direto no servidor: `curl -s http://127.0.0.1:9081/health` responde `{"ok":true,...}`, e `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9080/` responde `200`. Se isso funciona e o DNS não, o problema está no proxy do servidor (seção 1b).
+- Se ligou o proxy próprio, `monitor-proxy` mostra `certificate obtained successfully` para os dois nomes. Um erro de ACME quer dizer que o DNS ainda não aponta para o servidor, ou que a porta 80/443 está fechada.
 
 Testes:
 

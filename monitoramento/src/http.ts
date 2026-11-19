@@ -89,7 +89,28 @@ export function origemDoPainel(req: IncomingMessage, painelHost = process.env.PA
 }
 
 /** IP do cliente: o nginx do painel sobrescreve X-Real-IP com o IP real (vindo do Caddy). Sem ele, o do socket. */
-function ipCliente(req: IncomingMessage): string {
+/**
+ * Pedido chegou pelo endereço da API (Host = API_HOST)? Por ali só vale Bearer: sem login, sem cookie.
+ * O próprio app garante isso, porque na frente pode haver um balanceador (ex.: ALB da AWS) que não filtra nada.
+ */
+export function viaApiHost(req: IncomingMessage, apiHost = process.env.API_HOST): boolean {
+  const host = String(req.headers.host ?? "").split(":")[0].trim().toLowerCase();
+  const api = apiHost?.trim().toLowerCase();
+  return Boolean(api && host === api);
+}
+
+/**
+ * IP do cliente.
+ * - Pelo painel: o nginx do painel sobrescreve X-Real-IP com o IP real.
+ * - Pelo API_HOST (sem nginx no caminho): a ÚLTIMA entrada do X-Forwarded-For, que é a que o balanceador
+ *   escreveu; as anteriores e o X-Real-IP vêm do cliente e podem ser forjados.
+ */
+export function ipCliente(req: IncomingMessage, apiHost = process.env.API_HOST): string {
+  if (viaApiHost(req, apiHost)) {
+    const xff = req.headers["x-forwarded-for"];
+    const ultimo = typeof xff === "string" ? xff.split(",").pop()?.trim() : "";
+    return ultimo || req.socket.remoteAddress || "?";
+  }
   const real = req.headers["x-real-ip"];
   return (typeof real === "string" && real.trim()) || req.socket.remoteAddress || "?";
 }
@@ -109,7 +130,8 @@ function exigir(req: IncomingMessage, res: ServerResponse, auth: Auth, nivel: Pa
     registrarFalhaBearer(ip);
     console.warn(`▶ Bearer inválido: ip=${ip} rota=${req.url?.split("?")[0]}`);
   }
-  const acesso = bearer ?? acessoSessao(req, auth.contas, auth.segredo);
+  // pelo endereço da API, sessão (cookie) não vale: só Bearer
+  const acesso = bearer ?? (viaApiHost(req) ? null : acessoSessao(req, auth.contas, auth.segredo));
   if (!acesso) {
     json(res, 401, { ok: false, erro: "não autenticado: entre pelo painel ou use Authorization: Bearer" });
     return null;
@@ -184,6 +206,12 @@ let depsManual: DepsOrquestrador | undefined;
 
 async function rotear(config: AppConfig, auth: Auth, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
+
+  // Login e sessão só pelo painel. Pelo API_HOST, as rotas de sessão não existem.
+  if (viaApiHost(req) && ["/login", "/logout", "/sessao"].includes(url.pathname)) {
+    json(res, 404, { ok: false, erro: "não encontrado" });
+    return;
+  }
 
   if (url.pathname === "/health" && req.method === "GET") {
     json(res, 200, { ok: true, ocupado: jobOcupado() });
