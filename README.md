@@ -92,7 +92,7 @@ Testes: `cd monitoramento && npm run check`, com typecheck e testes, o mesmo que
 
 ## Configuração
 
-Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, ambos fora do Git. Os arquivos `.example` usam só valores fictícios e comentam cada variável. As que mais importam:
+Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, ambos fora do Git. Os arquivos `.example` usam só valores fictícios e comentam cada variável. As que mais importam (a lista completa está em [docs/deploy.md](docs/deploy.md#referência-das-variáveis-do-env)):
 
 | Variável | Uso |
 |---|---|
@@ -146,5 +146,6 @@ Siga **[docs/deploy.md](docs/deploy.md)**: servidor AWS (Elastic IP, Security Gr
 | Painel e histórico | [docs/painel.md](docs/painel.md) |
 | Contrato HTTP | [docs/api.md](docs/api.md) |
 | Infra, deploy e recuperação | [docs/deploy.md](docs/deploy.md) |
+| Como contribuir (scripts, testes, checklist de PR) | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) |
 | Decisões (por que é assim) | [docs/decisions/](docs/decisions/) |
 | Contexto para sessões de análise | [PROJECT-CONTEXT.md](PROJECT-CONTEXT.md) |

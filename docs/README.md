@@ -13,6 +13,8 @@ Comece pelo [README da raiz](../README.md): visão geral, glossário, como rodar
 | Ler o painel ou o histórico do dia | [painel.md](painel.md) |
 | Chamar o monitor pela HTTP | [api.md](api.md) |
 | Subir no servidor AWS, ver logs, migrar, voltar uma versão ou recuperar o token do ML | [deploy.md](deploy.md) |
+| Mudar o código e abrir um PR | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Ver todas as variáveis do `.env` | [deploy.md](deploy.md#referência-das-variáveis-do-env) |
 | Saber por que algo foi feito assim | [decisions/](decisions/) |
 
 ## Camadas

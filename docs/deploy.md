@@ -140,3 +140,63 @@ Os sinais são estes: o painel mostra "Teto ML indisponível: Falha ao renovar M
 3. Coloque o `access_token` e o `refresh_token` da resposta em `ML_ACCESS_TOKEN` e `ML_REFRESH_TOKEN` no `.env`.
 4. **Apague `monitoramento/data/ml-tokens.json`.** Esse arquivo tem prioridade sobre o `.env`. Se ficar, o monitor continua tentando o token morto.
 5. Rode `docker compose up -d --force-recreate api`. No log, deve aparecer `token ML renovado` na próxima checagem.
+
+## Referência das variáveis do `.env`
+
+Os comentários de cada uma estão no `.env.example`. "No servidor" significa obrigatória no servidor AWS e ausente na sua máquina.
+
+<!-- AUTO-GENERATED: .env.example + padrões do docker-compose.yml — regenere com /ecc:update-docs -->
+| Variável | Obrigatória | Padrão do compose | Para quê | Exemplo |
+|---|---|---|---|---|
+| `TZ` | Sim | nenhum (defina) | Fuso do monitor (agenda, histórico, horários) | `America/Sao_Paulo` |
+| `PAINEL_HOST` | No servidor | `painel.localhost` | DNS do painel (o Caddy emite o HTTPS) | `monitor.seusetor.com.br` |
+| `API_HOST` | No servidor | `api.localhost` | DNS da API | `api-monitor.seusetor.com.br` |
+| `PAINEL_PORTA` | Não | `8080` | Porta do painel no próprio servidor (127.0.0.1) | `8080` |
+| `API_PORTA` | Não | `8081` | Porta da API no próprio servidor (127.0.0.1) | `8081` |
+| `HTTP_PORTA` | Não | `80` | Porta pública HTTP do proxy (redireciona para HTTPS) | `80` |
+| `HTTPS_PORTA` | Não | `443` | Porta pública HTTPS do proxy | `443` |
+| `GOOGLE_CHAT_WEBHOOK_URL` | Não¹ | vazio | Webhook do Google Chat (avisos) | `https://chat.googleapis.com/v1/spaces/…` |
+| `ALERT_EMAIL_FROM` | Não | vazio | Remetente do e-mail (padrão: o próprio `ALERT_EMAIL_TO`) | `monitor@exemplo.com` |
+| `ALERT_EMAIL_TO` | Não¹ | vazio | Destinatário do e-mail (exige `SMTP_HOST`) | `ops@exemplo.com` |
+| `WHATSAPP_WEBHOOK_URL` | Não¹ | vazio | Webhook do WhatsApp (recebe `{number, text}`) | `https://…` |
+| `WHATSAPP_TO` | Não | vazio | Número de destino do WhatsApp | `5511999999999` |
+| `MONITOR_HTTP_TOKEN` | **Sim** | vazio | Token de **operação** (time técnico). Sem ele a API recusa tudo, menos `/health` | `openssl rand -hex 32` |
+| `PAINEL_TOKEN` | Não² | vazio | Token de **leitura** (time e cliente). Diferente do de operação | `openssl rand -hex 32` |
+| `ML_ACCESS_TOKEN` | Não | vazio | Access token do ML (renovado sozinho; ~6 h) | `APP_USR-…` |
+| `ML_REFRESH_TOKEN` | Recomendada³ | vazio | Refresh do ML, **uso único**. Nunca o da produção fora dela | `TG-…` |
+| `ML_CLIENT_ID` | Recomendada³ | vazio | App do ML (OAuth). Também vira o `application_id` da contingência | `0000…` |
+| `ML_CLIENT_SECRET` | Recomendada³ | vazio | Segredo do app do ML | `xxxx…` |
+| `ML_USER_ID` | Recomendada³ | vazio | Seller do relatório fiscal | `0000000000` |
+| `ML_APPLICATION_ID` | Não | — (não repassada) | **Ignorada pelo compose**: o compose repassa `ML_CLIENT_ID` no lugar | — |
+| `ML_TETO_DIAS` | Não | `1` | Janela do teto em dias (1 = só hoje) | `1` |
+| `FAKE_NOTA` | Não | vazio | Força um furo de teste. Vazio em produção | `99999/2` |
+| `NERUS_TENANT_ID` | Recomendada⁴ | vazio | Tenant do cliente no Nerus | — |
+| `NERUS_SSH_HOST` | Recomendada⁴ | vazio | Bastion SSH do Nerus | — |
+| `NERUS_SSH_PORT` | Não | `22` | Porta do bastion | `22` |
+| `NERUS_SSH_USER` | Recomendada⁴ | vazio | Usuário SSH do bastion | — |
+| `NERUS_SSH_KEY_HOST_PATH` | Não | `./secrets/bastion.pem` | Caminho da chave no host | `./secrets/bastion.pem` |
+| `NERUS_DB_HOST` | Recomendada⁴ | vazio | MySQL do Nerus (visto do bastion) | — |
+| `NERUS_DB_PORT` | Não | `3306` | Porta do MySQL | `3306` |
+| `NERUS_DB_USER` | Recomendada⁴ | vazio | Usuário MySQL (só leitura) | — |
+| `NERUS_DB_PASSWORD` | Recomendada⁴ | vazio | Senha MySQL | — |
+| `NERUS_USERNAME` | Recomendada⁵ | vazio | Login da API de contingência | — |
+| `NERUS_PASSWORD` | Recomendada⁵ | vazio | Senha da API de contingência | — |
+| `NERUS_AUTH_URL` | Recomendada⁵ | vazio | URL de login da API do Nerus | — |
+| `NERUS_NOTIFICATION_URL` | Recomendada⁵ | vazio | URL de renotificação (contingência) | — |
+| `PAINEL_INTERVALO_MIN` | Não | `5` | Checagem silenciosa do painel, em min (`0` desliga) | `5` |
+| `ML_TETO_CACHE_MIN` | Não | `5` | Cache do ZIP do ML, em min. Suba se der 429 | `5` |
+| `MODO_AGENDA` | No servidor | `sombra` | `off` · `sombra` · `ativo`. **Servidor: `ativo`** | `ativo` |
+| `AGENDA_CICLO` | Não | `0 8-18 * * 1-5` | Cron do ciclo, fuso America/Sao_Paulo | `0 8-18 * * 1-5` |
+| `SMTP_HOST` | Não¹ | vazio | Servidor SMTP (sem ele, não envia e-mail) | `smtp.exemplo.com` |
+| `SMTP_PORT` | Não | `587` | Porta SMTP (465 liga TLS direto) | `587` |
+| `SMTP_SECURE` | Não | vazio | `true` para TLS direto | vazio |
+| `SMTP_USER` | Não | vazio | Usuário SMTP | — |
+| `SMTP_PASS` | Não | vazio | Senha SMTP | — |
+| `CONTINGENCIA` | No servidor | `off` | `on` renotifica o gateway **de verdade**. **Servidor: `on`**; fora dele, nunca | `on` |
+
+¹ Pelo menos **um** canal de aviso no servidor (Chat, WhatsApp ou e-mail com `SMTP_HOST` + `ALERT_EMAIL_TO`); o log da subida avisa se nenhum estiver configurado.
+² Sem ele, só o token de operação entra: não mande esse ao cliente.
+³ Sem as credenciais do ML não há teto: o monitor roda só com o FTP e o painel mostra "cobertura parcial".
+⁴ Sem elas não há diagnóstico no Nerus: cada furo sai "Não foi possível consultar o Nerus".
+⁵ Sem elas a contingência falha (o relatório pede o time técnico).
+<!-- /AUTO-GENERATED -->
