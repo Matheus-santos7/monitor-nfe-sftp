@@ -5,6 +5,8 @@ import { executarJob, jobOcupado, retomarHistorico } from "./job.js";
 import { contingenciaLigada } from "./ciclo.js";
 import { canaisDoAmbiente } from "./avisos.js";
 import { configurarAgenda, depsOrquestradorReais, dispararCiclo, modoAgenda } from "./orquestrador.js";
+import { statusPainel } from "./job.js";
+import { diasDoPeriodo, inicioPeriodo, resumoPeriodo } from "./resumo.js";
 
 const AGENDA_PADRAO = "0 8-18 * * 1-5"; // seg–sex, de hora em hora, 8h–18h
 
@@ -49,6 +51,26 @@ function iniciarAgenda(config: ReturnType<typeof carregarConfig>): void {
     name: "ciclo",
   });
   configurarAgenda({ modo, expressao, proximo: () => tarefa.getNextRun() });
+
+  // Resumo do período no Chat (padrão 10h e 18h, dias úteis): às 10h cobre desde as 18h do dia útil anterior.
+  const cronResumo = process.env.RESUMO_CRON?.trim() || "0 10,18 * * 1-5";
+  if (!cron.validate(cronResumo)) throw new Error(`RESUMO_CRON inválida: ${cronResumo}`);
+  cron.schedule(
+    cronResumo,
+    () => {
+      const agora = new Date();
+      const inicio = inicioPeriodo(agora);
+      const p = statusPainel();
+      const m = resumoPeriodo(diasDoPeriodo(inicio, agora), inicio, agora, p.ausentesDesde, p.resultado?.identificador ?? config.cliente.nome);
+      if (sombra) return console.log(`▶ [sombra] resumo não enviado: ${m.assunto}`);
+      deps
+        .enviar(m)
+        .then((r) => console.log(`▶ Resumo do período enviado (${r.entregues.join(", ") || "nenhum canal"})`))
+        .catch((e) => console.error(`▶ Resumo do período falhou: ${e instanceof Error ? e.message : String(e)}`));
+    },
+    { timezone: "America/Sao_Paulo", name: "resumo" },
+  );
+  console.log(`▶ Resumo do período: ${cronResumo} (America/Sao_Paulo)`);
   console.log(
     sombra
       ? `▶ Agenda do ciclo em SOMBRA (${expressao}): roda sem contingência e não envia avisos`
