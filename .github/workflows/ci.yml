@@ -32,6 +32,9 @@ jobs:
       - name: docker-compose.yml válido
         working-directory: .
         run: docker compose --env-file .env.example config -q
+      - name: modelo do servidor (servidor/docker-compose.yml) válido
+        working-directory: .
+        run: docker compose -f servidor/docker-compose.yml config -q
 
   # Imagens: no PR só compila (pega Dockerfile quebrado antes do merge); no push da main ou de uma tag v*,
   # publica no GHCR depois dos testes. O servidor baixa com: docker compose pull && docker compose up -d

@@ -51,41 +51,41 @@ Ninguém recebe token no link. Cada pessoa tem a própria conta, criada com `nod
 
 ## 1. Instalação no servidor (primeira vez)
 
-O servidor **não precisa do código**: as imagens (`api`, `painel`, `proxy`) são publicadas pelo CI no GitHub Container Registry a cada merge na `main`, e o servidor só as baixa. Na pasta do servidor ficam apenas estes arquivos:
+O servidor **não precisa do código nem de `.env`**: tudo fica num **único arquivo**, o modelo [`servidor/docker-compose.yml`](../servidor/docker-compose.yml). Ele guarda:
+- as variáveis (no lugar do `.env`);
+- o conteúdo do `config.yml` (em `configs:`);
+- o **caminho da chave `.pem`** (em `secrets:`).
+
+As imagens vêm prontas do GitHub Container Registry, e os dados (histórico, token do ML, trava) ficam num volume do Docker.
 
 ```
-monitor-nfe/
-├── docker-compose.yml          # baixado do repositório (é o único arquivo do projeto)
-├── .env                        # segredos e configuração (chmod 600)
-├── monitoramento/
-│   ├── config.yml              # cliente, SFTP, séries
-│   └── data/                   # histórico, token do ML em uso, trava da contingência
-└── secrets/
-    └── bastion.pem             # chave SSH do Nerus (chmod 600)
+~/monitor-nfe/
+└── docker-compose.yml     ← o único arquivo (chmod 600: tem senhas)
+~/chaves/bastion.pem       ← a chave do Nerus, no caminho que você indicar em secrets: (chmod 600)
 ```
 
 ```bash
 ssh <servidor>
-mkdir -p ~/monitor-nfe/monitoramento/data ~/monitor-nfe/secrets && cd ~/monitor-nfe
-curl -fsSLO https://raw.githubusercontent.com/Matheus-santos7/monitor-nfe-sftp/main/docker-compose.yml
+docker compose version            # precisa ser 2.23.1 ou mais novo
+mkdir -p ~/monitor-nfe ~/chaves && cd ~/monitor-nfe
+curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Matheus-santos7/monitor-nfe-sftp/main/servidor/docker-compose.yml
+chmod 600 docker-compose.yml
 ```
 
-Vindo da sua máquina, que hoje é a produção, siga a **seção 4 (migração)**: ela traz o `.env`, o `config.yml`, a chave e o `data/`. Numa instalação do zero, use o `.env.example` e o `config.example.yml` do repositório como modelo.
+Preencha todos os `<…>` do arquivo:
 
-No `.env` do servidor, além das credenciais (ML, Nerus, canais de aviso):
+| Onde no arquivo | O que vai |
+|---|---|
+| `x-enderecos` | Os dois DNS (`PAINEL_HOST`, `API_HOST`) |
+| `environment` da `api` | O que antes ia no `.env`: contas, `SESSAO_SEGREDO`, `MONITOR_HTTP_TOKEN`, Google Chat, ML, Nerus. Já vem com `MODO_AGENDA: ativo` e `CONTINGENCIA: "on"` |
+| `configs.config_monitor.content` | O que antes ia no `config.yml`: cliente, SFTP, séries |
+| `secrets.bastion.file` | O caminho da chave no servidor (ex.: `/home/ec2-user/chaves/bastion.pem`) |
 
-```
-MODO_AGENDA=ativo
-CONTINGENCIA=on
-PAINEL_HOST=monitor.seusetor.com.br
-API_HOST=api-monitor.seusetor.com.br
-MONITOR_VERSAO=latest                       # ou uma versão fixa, ex.: sha-531971d (ver seção 5)
-MONITOR_HTTP_TOKEN=<openssl rand -hex 32>   # Bearer da API, só scripts do time técnico
-SESSAO_SEGREDO=<openssl rand -hex 32>       # assina o cookie de login
-PAINEL_USUARIOS=                            # contas (seção 3), separadas por vírgula
-```
+- Um valor com `$` (uma senha, por exemplo) precisa ser escrito como `$$`.
+- Vindo da sua máquina, que hoje é a produção, siga a **seção 4**: ela traz também o token do ML em uso.
+- **Se as imagens estiverem privadas** no GitHub (Packages), faça uma vez no servidor: `docker login ghcr.io -u <usuario-github>`, usando um token só com `read:packages`.
 
-**Se as imagens estiverem privadas** no GitHub (Packages), faça uma vez no servidor: `docker login ghcr.io -u <usuario-github>`, usando um token com permissão só `read:packages`. Se estiverem públicas, nada é preciso.
+> O `docker-compose.yml` da raiz do repositório é o de **desenvolvimento** (usa `.env`, `config.yml` e compila o código). No servidor, use só o `servidor/docker-compose.yml`.
 
 ## 2. Subir e verificar
 
@@ -98,7 +98,7 @@ docker compose logs -f            # Ctrl+C sai sem parar nada
 
 O que precisa aparecer nos logs:
 
-- `monitor-api`: `monitor-sftp pronto`, `Contingência LIGADA` e `Agenda do ciclo ATIVA`. Não pode aparecer "nenhum canal de aviso configurado". Se aparecer "desligada" ou "SOMBRA", falta `CONTINGENCIA=on` ou `MODO_AGENDA=ativo` no `.env`.
+- `monitor-api`: `monitor-sftp pronto`, `Contingência LIGADA` e `Agenda do ciclo ATIVA`. Não pode aparecer "nenhum canal de aviso configurado". Se aparecer "desligada" ou "SOMBRA", confira `CONTINGENCIA: "on"` e `MODO_AGENDA: ativo` no `docker-compose.yml`.
 - `monitor-proxy`: `certificate obtained successfully` para os dois nomes. Se aparecer um erro de ACME, o DNS ainda não aponta para o servidor, ou a porta 80/443 está fechada.
 
 Testes:
@@ -120,16 +120,16 @@ Crie as contas (seção 3), abra `https://PAINEL_HOST` e entre com uma conta `op
 | Ver o estado dos containers | `docker compose ps` |
 | **Atualizar para uma versão nova** (depois do merge na `main` e do CI verde) | `docker compose pull && docker compose up -d`. Só os containers com imagem nova são recriados |
 | Ver qual versão está rodando | `docker compose images` (a coluna TAG) ou `docker inspect monitor-api --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'` (o commit) |
-| Atualizar o `docker-compose.yml` (raro; quando o PR mexer nele) | `curl -fsSLO https://raw.githubusercontent.com/Matheus-santos7/monitor-nfe-sftp/main/docker-compose.yml && docker compose up -d` |
-| Aplicar uma mudança no `.env` | `docker compose up -d --force-recreate api` (ou `proxy`, se mudou `PAINEL_HOST`/`API_HOST`) |
-| Aplicar uma mudança no `config.yml` (ex.: série nova) | `docker compose restart api` |
-| Pausar o monitor (manutenção do gateway) | `MODO_AGENDA=off` no `.env` e recriar a `api`. O painel continua mostrando o estado |
-| Manter os avisos, mas sem contingência | `CONTINGENCIA=off` no `.env` e recriar a `api` |
-| **Criar a conta de uma pessoa** | `docker compose exec api node dist/senha.js <usuario> <leitura\|operacao>` (pede a senha, mínimo de 12 caracteres, sem eco). Acrescente a linha impressa em `PAINEL_USUARIOS` (separe as contas por vírgula) e recrie a `api` |
+| Atualizar a estrutura do arquivo (raro; quando um PR mexer em `servidor/docker-compose.yml`) | Compare com o modelo novo do repositório e leve só as mudanças. **Não sobrescreva**: o seu arquivo tem os valores preenchidos |
+| Backup dos dados (histórico, token do ML) | `docker run --rm -v monitor-nfe_monitor_data:/dados -v "$PWD":/backup alpine tar czf /backup/dados-$(date +%F).tgz -C /dados .` |
+| Mudar uma variável ou o `config.yml` (ex.: série nova) | Edite o `docker-compose.yml` e rode `docker compose up -d` (recria só o que mudou) |
+| Pausar o monitor (manutenção do gateway) | `MODO_AGENDA: off` no `docker-compose.yml` e `docker compose up -d`. O painel continua mostrando o estado |
+| Manter os avisos, mas sem contingência | `CONTINGENCIA: "off"` no `docker-compose.yml` e `docker compose up -d` |
+| **Criar a conta de uma pessoa** | `docker compose exec api node dist/senha.js <usuario> <leitura\|operacao>` (pede a senha, mínimo de 12 caracteres, sem eco). Acrescente a linha impressa em `PAINEL_USUARIOS` no `docker-compose.yml` (separe as contas por vírgula) e rode `docker compose up -d` |
 | Trocar a senha de alguém | Gere de novo com o mesmo usuário e substitua a linha. **As sessões abertas dessa pessoa caem na hora** |
-| Tirar o acesso de alguém | Apague a linha da pessoa em `PAINEL_USUARIOS` e recrie a `api`. A sessão dela para de valer |
-| Derrubar todas as sessões (suspeita de vazamento) | Gere um novo `SESSAO_SEGREDO` e recrie a `api`. Todo mundo entra de novo |
-| Trocar o token da API (scripts) | Gere um novo `MONITOR_HTTP_TOKEN`, troque no `.env` e nos scripts, recrie a `api` |
+| Tirar o acesso de alguém | Apague a linha da pessoa em `PAINEL_USUARIOS` e rode `docker compose up -d`. A sessão dela para de valer |
+| Derrubar todas as sessões (suspeita de vazamento) | Gere um novo `SESSAO_SEGREDO` e rode `docker compose up -d`. Todo mundo entra de novo |
+| Trocar o token da API (scripts) | Gere um novo `MONITOR_HTTP_TOKEN`, troque no `docker-compose.yml` e nos scripts, e rode `docker compose up -d` |
 | Ver quem entrou e quem operou | `docker compose logs api \| grep -E "Login\|Executar agora"` |
 
 Os logs giram sozinhos: são 10 MB × 5 arquivos por serviço.
@@ -138,28 +138,31 @@ Os logs giram sozinhos: são 10 MB × 5 arquivos por serviço.
 
 Hoje a produção roda na sua máquina. É nela que estão o token do ML em uso, a trava da contingência e o histórico. A ordem existe por causa do token do ML de uso único e da contingência.
 
-1. Confirme no servidor: **IP fixo**, Security Group (80/443), os dois registros DNS A apontando para ele, e **o IP liberado no SFTP do cliente e no bastion do Nerus**. Se der, teste do servidor: `ssh -i bastion.pem ec2-user@<bastion> exit`.
-2. **Na sua máquina, pare tudo:** `docker compose down`. Daqui em diante, nada renova o token nem agenda ciclos ali.
-3. Copie da sua máquina para o servidor:
+1. Confirme no servidor: **IP fixo**, Security Group (80/443), os dois registros DNS A apontando para ele, e **o IP liberado no SFTP do cliente e no bastion do Nerus**. Se der, teste do servidor: `ssh -i ~/chaves/bastion.pem ec2-user@<bastion> exit`.
+2. Monte o `~/monitor-nfe/docker-compose.yml` do servidor (seção 1). Use os valores do `.env` e do `monitoramento/config.yml` da sua máquina, e troque `PAINEL_HOST`/`API_HOST` pelos DNS reais. As contas (`PAINEL_USUARIOS`) e o `SESSAO_SEGREDO` podem ser copiados como estão: as senhas continuam as mesmas.
+3. **Na sua máquina, pare tudo:** `cd ~/Projetos/monitor-nfe-sftp && docker compose down`. Daqui em diante, nada renova o token nem agenda ciclos ali.
+4. Leve a chave e os dados (obrigatório: `monitoramento/data/ml-tokens.json` tem o token do ML **atual**, com prioridade sobre o que está no arquivo):
    ```bash
-   cd ~/Projetos/monitor-nfe-sftp
-   scp .env <servidor>:~/monitor-nfe/.env
-   scp monitoramento/config.yml <servidor>:~/monitor-nfe/monitoramento/config.yml
-   scp secrets/bastion.pem <servidor>:~/monitor-nfe/secrets/bastion.pem
-   scp -r monitoramento/data/. <servidor>:~/monitor-nfe/monitoramento/data/
-   ssh <servidor> 'chmod 600 ~/monitor-nfe/.env ~/monitor-nfe/secrets/bastion.pem'
+   # da sua máquina
+   scp secrets/bastion.pem <servidor>:~/chaves/bastion.pem
+   scp -r monitoramento/data <servidor>:~/monitor-nfe-dados
+   # no servidor: põe os dados no volume do monitor e confere
+   ssh <servidor>
+   chmod 600 ~/chaves/bastion.pem
+   cd ~/monitor-nfe && docker compose create                # cria o volume monitor-nfe_monitor_data
+   docker run --rm -v monitor-nfe_monitor_data:/dados -v ~/monitor-nfe-dados:/origem alpine cp -a /origem/. /dados/
+   docker run --rm -v monitor-nfe_monitor_data:/dados alpine ls /dados   # deve listar ml-tokens.json, historico, …
+   rm -rf ~/monitor-nfe-dados
    ```
-   A pasta `data/` é obrigatória: o `ml-tokens.json` tem o token do ML **atual**, com prioridade sobre o `.env`. Sem ele, o servidor sobe com um token que já não vale.
-4. No `.env` do servidor, troque `PAINEL_HOST` e `API_HOST` pelos DNS reais. O resto (contas, `SESSAO_SEGREDO`, `MODO_AGENDA=ativo`, `CONTINGENCIA=on`) já vem pronto da sua máquina.
-5. Suba e verifique (seção 2). As contas e as senhas do painel continuam as mesmas.
+5. Suba e verifique (seção 2).
 6. **Não religue a sua máquina** com `MODO_AGENDA=ativo`. Para desenvolver nela, tire `MODO_AGENDA` e `CONTINGENCIA` do `.env` local (volta a ser sombra/off) e use outro `ML_REFRESH_TOKEN`, ou deixe vazio.
 
 ## 5. Rollback
 
-- **Para a versão anterior:** cada merge publica também uma tag `sha-<commit>`. No `.env`, coloque `MONITOR_VERSAO=sha-<commit anterior>` (veja as versões em GitHub → Packages) e rode `docker compose pull && docker compose up -d`. Para voltar a acompanhar a `main`: `MONITOR_VERSAO=latest`.
+- **Para a versão anterior:** cada merge publica também uma tag `sha-<commit>`. No `docker-compose.yml` do servidor, troque `:latest` das três imagens por `:sha-<commit anterior>` (veja as versões em GitHub → Packages) e rode `docker compose pull && docker compose up -d`. Para voltar a acompanhar a `main`, ponha `:latest` de novo.
 - **De volta para a sua máquina:**
   1. `docker compose down` no servidor.
-  2. Copie a `monitoramento/data/` do servidor de volta para a sua máquina, porque o token do ML girou no servidor.
+  2. Copie os dados do volume de volta para a `monitoramento/data/` da sua máquina, porque o token do ML girou no servidor: use o comando de backup da seção 3 e descompacte na pasta.
   3. Suba na sua máquina.
 
 ## 6. O token do Mercado Livre morreu
@@ -173,13 +176,13 @@ Os sinais são estes: o painel mostra "Teto ML indisponível: Falha ao renovar M
      -d grant_type=authorization_code -d client_id=<ML_CLIENT_ID> -d client_secret=<ML_CLIENT_SECRET> \
      -d code=<code> -d redirect_uri=<redirect cadastrado no app>
    ```
-3. Coloque o `access_token` e o `refresh_token` da resposta em `ML_ACCESS_TOKEN` e `ML_REFRESH_TOKEN` no `.env`.
-4. **Apague `monitoramento/data/ml-tokens.json`.** Esse arquivo tem prioridade sobre o `.env`. Se ficar, o monitor continua tentando o token morto.
+3. Coloque o `access_token` e o `refresh_token` da resposta em `ML_ACCESS_TOKEN` e `ML_REFRESH_TOKEN` no `docker-compose.yml`.
+4. **Apague o `ml-tokens.json` do volume:** `docker compose exec api rm /app/data/ml-tokens.json`. Ele tem prioridade sobre o que está no arquivo. Se ficar, o monitor continua tentando o token morto.
 5. Rode `docker compose up -d --force-recreate api`. No log, deve aparecer `token ML renovado` na próxima checagem.
 
-## Referência das variáveis do `.env`
+## Referência das variáveis
 
-Os comentários de cada uma estão no `.env.example`. "No servidor" significa obrigatória no servidor AWS e ausente na sua máquina.
+No servidor elas ficam no `environment` do `servidor/docker-compose.yml`; no desenvolvimento, no `.env`. Os comentários de cada uma estão no `.env.example`. "No servidor" significa obrigatória no servidor AWS e ausente na sua máquina.
 
 <!-- AUTO-GENERATED: .env.example + padrões do docker-compose.yml — regenere com /ecc:update-docs -->
 | Variável | Obrigatória | Padrão do compose | Para quê | Exemplo |

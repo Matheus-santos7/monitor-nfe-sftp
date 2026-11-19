@@ -1,0 +1,185 @@
+# ============================================================================================
+#  Monitor NF-e — ARQUIVO ÚNICO DO SERVIDOR
+#  Tudo o que o servidor precisa está aqui: variáveis, config.yml e o caminho da chave .pem.
+#  As imagens vêm prontas do GitHub Container Registry (publicadas pelo CI a cada merge na main).
+#
+#  No servidor:
+#    1. copie este arquivo para ~/monitor-nfe/docker-compose.yml e preencha os <…>
+#    2. chmod 600 docker-compose.yml          (ele guarda senhas: só você lê)
+#    3. docker compose up -d                  (baixa as imagens e sobe)
+#    4. docker compose logs -f                (acompanha; Ctrl+C sai sem parar nada)
+#  Atualizar:  docker compose pull && docker compose up -d
+#  Voltar uma versão:  troque ":latest" das 3 imagens por ":sha-<commit>" e rode o mesmo comando
+#
+#  ⚠️  NUNCA commite este arquivo preenchido (ele tem senhas). O modelo do repositório fica vazio.
+#  ⚠️  Valor com "$" (ex.: uma senha) precisa ser escrito como "$$", senão o compose interpreta.
+#  Requer Docker Compose 2.23.1 ou mais novo (docker compose version).
+# ============================================================================================
+
+name: monitor-nfe
+
+# Endereços (DNS) — usados pela api (CSRF) e pelo proxy (HTTPS). Um registro A para cada, apontando para o servidor.
+x-enderecos: &enderecos
+  PAINEL_HOST: <monitor.seusetor.com.br>
+  API_HOST: <api-monitor.seusetor.com.br>
+  PAINEL_PORTA: "8080"
+
+x-logs: &logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  # Backend: API, agenda do ciclo e avisos
+  api:
+    image: ghcr.io/matheus-santos7/monitor-nfe-api:latest
+    container_name: monitor-api
+    restart: unless-stopped
+    environment:
+      <<: *enderecos
+      TZ: America/Sao_Paulo
+      CONFIG_PATH: /app/config.yml
+      PORT: "8080"
+
+      # --- Modo de produção ---
+      MODO_AGENDA: ativo # off (pausado) | sombra (sem contingência e sem avisos) | ativo
+      CONTINGENCIA: "on" # "on" renotifica o gateway fiscal DE VERDADE; "off" para pausar só a contingência
+      AGENDA_CICLO: "0 8-18 * * 1-5" # cron, fuso America/Sao_Paulo
+      PAINEL_INTERVALO_MIN: "5"
+      FAKE_NOTA: "" # vazio em produção
+
+      # --- Acesso ao painel (login) e à API ---
+      # Contas: docker compose exec api node dist/senha.js <usuario> <leitura|operacao>  → cole as linhas, separadas por vírgula
+      PAINEL_USUARIOS: "<usuario:operacao:salt:hash>,<cliente:leitura:salt:hash>"
+      SESSAO_SEGREDO: "<openssl rand -hex 32>"
+      MONITOR_HTTP_TOKEN: "<openssl rand -hex 32>" # Bearer da API (scripts); nunca na URL
+
+      # --- Avisos ---
+      GOOGLE_CHAT_WEBHOOK_URL: "<https://chat.googleapis.com/v1/spaces/…>"
+      WHATSAPP_WEBHOOK_URL: ""
+      WHATSAPP_TO: ""
+      ALERT_EMAIL_FROM: ""
+      ALERT_EMAIL_TO: ""
+      SMTP_HOST: ""
+      SMTP_PORT: "587"
+      SMTP_SECURE: ""
+      SMTP_USER: ""
+      SMTP_PASS: ""
+
+      # --- Mercado Livre ---
+      # O token renovado fica no volume monitor_data (ml-tokens.json), que vale mais que estes valores.
+      # Só são lidos na primeira subida (volume vazio) ou depois de apagar o ml-tokens.json.
+      ML_CLIENT_ID: "<client id>"
+      ML_CLIENT_SECRET: "<client secret>"
+      ML_APPLICATION_ID: "<igual ao client id>"
+      ML_USER_ID: "<seller id>"
+      ML_ACCESS_TOKEN: "<APP_USR-…>"
+      ML_REFRESH_TOKEN: "<TG-…>"
+      ML_TETO_DIAS: "1"
+      ML_TETO_CACHE_MIN: "5"
+      ML_TOKENS_PATH: /app/data/ml-tokens.json
+
+      # --- Nerus (diagnóstico via SSH/MySQL e contingência) ---
+      NERUS_TENANT_ID: "<tenant>"
+      NERUS_SSH_HOST: "<ip ou host do bastion>"
+      NERUS_SSH_PORT: "22"
+      NERUS_SSH_USER: "<usuario ssh>"
+      NERUS_SSH_KEY: /run/secrets/bastion.pem # a chave vem de secrets:, lá embaixo
+      NERUS_DB_HOST: "<host do mysql>"
+      NERUS_DB_PORT: "3306"
+      NERUS_DB_USER: "<usuario mysql>"
+      NERUS_DB_PASSWORD: "<senha mysql>"
+      NERUS_AUTH_URL: "<https://…/signin>"
+      NERUS_USERNAME: "<usuario api>"
+      NERUS_PASSWORD: "<senha api>"
+      NERUS_NOTIFICATION_URL: "<https://…/notification/invoice>"
+    configs:
+      - source: config_monitor
+        target: /app/config.yml
+    secrets:
+      - source: bastion
+        target: bastion.pem # aparece em /run/secrets/bastion.pem
+    volumes:
+      - monitor_data:/app/data # histórico, token do ML em uso, trava da contingência
+    ports:
+      - "127.0.0.1:8081:8080" # só no próprio servidor (curl/túnel); de fora, via https://API_HOST
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks: [monitor]
+    logging: *logs
+
+  # Frontend: painel e histórico (login)
+  painel:
+    image: ghcr.io/matheus-santos7/monitor-nfe-painel:latest
+    container_name: monitor-painel
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "127.0.0.1:8080:80"
+    networks: [monitor]
+    logging: *logs
+
+  # HTTPS (Caddy): https://PAINEL_HOST → painel · https://API_HOST → api (só Bearer)
+  proxy:
+    image: ghcr.io/matheus-santos7/monitor-nfe-proxy:latest
+    container_name: monitor-proxy
+    restart: unless-stopped
+    depends_on: [api, painel]
+    environment:
+      <<: *enderecos
+    volumes:
+      - caddy_data:/data # certificados: não apague
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [monitor]
+    logging: *logs
+
+# ---------------------------------------------------------------------------------------------
+#  config.yml do monitor (o mesmo conteúdo do antigo monitoramento/config.yml)
+# ---------------------------------------------------------------------------------------------
+configs:
+  config_monitor:
+    content: |
+      cliente:
+        nome: <Nome do cliente>
+        conta: "<conta no Mercado Livre>"
+        canal: Mercado Livre
+
+      sftp:
+        host: <host do sftp>
+        porta: 22
+        usuario: <usuario>
+        senha: "<senha>"
+        diretorios:
+          - /xml-nerus
+          - /xml-nerus/Transferidos
+        ip_origem: ""
+
+      series:
+        - numero: 2
+          nota_inicial: 1
+        - numero: 8
+          nota_inicial: 1
+
+# ---------------------------------------------------------------------------------------------
+#  Chave SSH do bastion do Nerus: aponte o caminho do .pem NO SERVIDOR (chmod 600 no arquivo)
+# ---------------------------------------------------------------------------------------------
+secrets:
+  bastion:
+    file: /home/ec2-user/chaves/bastion.pem
+
+volumes:
+  monitor_data: # dados do monitor (não apague: tem o token do ML em uso)
+  caddy_data:
+  caddy_config:
+
+networks:
+  monitor:
+    driver: bridge

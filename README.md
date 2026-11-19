@@ -43,7 +43,8 @@ monitoramento/        serviço Node 22 + TypeScript (a regra inteira)
   config.example.yml  modelo do config.yml (cliente, SFTP, séries)
 docs/                 documentação por camada (ver abaixo)
 secrets/              chave SSH do bastion (fora do Git)
-docker-compose.yml    o projeto inteiro: api, painel e proxy
+docker-compose.yml    desenvolvimento: api, painel e proxy (usa .env, config.yml e compila)
+servidor/             docker-compose.yml do servidor: o ÚNICO arquivo em produção (variáveis, config e chave)
 painel/               frontend: index.html + nginx.conf + Dockerfile
 proxy/                Caddyfile + Dockerfile do proxy HTTPS (um DNS por serviço)
 .env.example          modelo do .env (segredos, fora do Git)
@@ -129,7 +130,7 @@ Com a agenda em sombra, o botão **Executar agora** roda o ciclo inteiro sem ren
 
 ## Configuração
 
-Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, ambos fora do Git. Os arquivos `.example` usam só valores fictícios e comentam cada variável. As que mais importam (a lista completa está em [docs/deploy.md](docs/deploy.md#referência-das-variáveis-do-env)):
+Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, ambos fora do Git. Os arquivos `.example` usam só valores fictícios e comentam cada variável. As que mais importam (a lista completa está em [docs/deploy.md](docs/deploy.md#referência-das-variáveis)):
 
 | Variável | Uso |
 |---|---|
@@ -150,7 +151,7 @@ Depois de mudar o `.env`: `docker compose up -d --force-recreate api`. Depois de
 
 ## Produção
 
-Siga **[docs/deploy.md](docs/deploy.md)**. O servidor **não precisa do código**: o CI publica as imagens (`api`, `painel`, `proxy`) no GitHub Container Registry a cada merge na `main`, e no servidor ficam só o `docker-compose.yml`, o `.env`, o `config.yml`, a chave e a pasta `data/`. Para atualizar: `docker compose pull && docker compose up -d`. Para voltar uma versão: `MONITOR_VERSAO=sha-<commit>` no `.env`.
+Siga **[docs/deploy.md](docs/deploy.md)**. No servidor fica **um único arquivo**, o [`servidor/docker-compose.yml`](servidor/docker-compose.yml). Ele guarda as variáveis (sem `.env`), o conteúdo do `config.yml` e o caminho da chave `.pem`. As imagens vêm prontas do GitHub Container Registry, publicadas pelo CI a cada merge na `main`, e os dados ficam num volume do Docker. Para atualizar: `docker compose pull && docker compose up -d`.
 
 ## Problemas comuns
 
