@@ -144,6 +144,7 @@ Tudo que identifica o cliente fica no `.env` e no `monitoramento/config.yml`, am
 | `ML_TETO_CACHE_MIN` | Cache do ZIP do ML, em minutos (padrão 5). Suba se aparecer 429 |
 | `PAINEL_INTERVALO_MIN` | Checagem do painel, em minutos (padrão 5; `0` desliga) |
 | `FAKE_NOTA` | Força um furo de teste. Vazio em produção |
+| `RESUMO_CRON` | Horários do resumo no Chat (padrão `0 10,18 * * 1-5`). O das 10h cobre desde as 18h do dia útil anterior |
 | `TOLERANCIA_MIN` | Minutos que uma nota ausente fica "em trânsito" antes de virar furo (padrão 20). Evita alarme falso por atraso de integração |
 | `MODO_AGENDA` / `AGENDA_CICLO` | Agenda do ciclo: padrão `sombra`; **no servidor** `MODO_AGENDA=ativo`; `off` pausa. Ver [docs/monitor.md](docs/monitor.md#agenda-e-avisos) |
 | Canais de aviso | `GOOGLE_CHAT_WEBHOOK_URL`, `WHATSAPP_WEBHOOK_URL` + `WHATSAPP_TO`, `SMTP_*` + `ALERT_EMAIL_*`. Canal vazio = não envia por ele |

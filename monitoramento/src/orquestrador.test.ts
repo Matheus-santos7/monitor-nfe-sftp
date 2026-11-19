@@ -29,7 +29,9 @@ function deps(over: Partial<DepsOrquestrador> & { conferencias?: ResultadoConfer
   };
   return { d, log };
 }
-const rodar = (d: DepsOrquestrador, sombra = false) => executarCicloCompleto(d, { execucao: "t", origem: "agenda", sombra });
+// anterior "alerta": o "ok" deste ciclo é uma volta ao normal (vai para o Chat)
+const rodar = (d: DepsOrquestrador, sombra = false, anterior: string | null = "alerta") =>
+  executarCicloCompleto(d, { execucao: "t", origem: "agenda", sombra, anterior });
 
 test("sem lote: envia o resumo do ciclo, sem esperar nem conferir", async () => {
   const { d, log } = deps();
@@ -106,4 +108,15 @@ test("último ciclo agendado do dia (18h em São Paulo) pede para ignorar a tole
   await executarCicloCompleto(mk("2026-11-19T20:00:00Z").d, { execucao: "b", origem: "agenda", sombra: false }); // 17h SP
   await executarCicloCompleto(mk("2026-11-19T21:00:00Z").d, { execucao: "c", origem: "manual", sombra: false }); // manual 18h
   assert.deepEqual(pedidos, [true, false, false]);
+});
+
+test("ok repetido (ou primeira rodada) não manda nada; cobertura parcial só quando muda de estado", async () => {
+  const a = deps();
+  await rodar(a.d, false, "ok");
+  await rodar(a.d, false, null);
+  assert.deepEqual(a.log.enviadas, [], "sem '100% OK' de hora em hora");
+  const b = deps({ ciclo: async () => ciclo({ status: "degradado", mensagens: [m("parcial")] }) });
+  await rodar(b.d, false, "ok");
+  await rodar(b.d, false, "degradado");
+  assert.deepEqual(b.log.enviadas, ["parcial"], "repete só quando muda");
 });

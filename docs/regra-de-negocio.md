@@ -38,6 +38,20 @@ A agenda do monitor roda o ciclo seg–sex, de hora em hora, das 8h às 18h (`AG
 
 No painel, o `degradado` aparece como `erro`, com o texto "Checagem incompleta — veja os avisos". O nome muda, mas a regra é a mesma: nunca verde.
 
+## 2a. O que vai para o Google Chat
+
+O canal só recebe o que pede atenção:
+
+| Situação | Vai para o Chat? |
+|---|---|
+| Furo (nota ausente há ≥ tolerância), série sem XML, falha do ciclo | **Sempre** |
+| Cobertura parcial (`degradado`) | Só quando o estado **muda** (não repete a cada hora) |
+| Voltou ao normal (estava em furo, falha ou parcial e agora está ok) | Sim, um aviso de volta ao normal |
+| Tudo ok e continua ok, ou notas em trânsito | Não |
+| **Resumo do período**, às **10h** (desde as 18h do dia útil anterior, incluindo a madrugada) e às **18h** (desde as 10h) | Sim (`RESUMO_CRON`) |
+
+As mensagens no Chat são curtas: o título em negrito, o que aconteceu, o que o monitor fez, o que fazer e o link do painel. O **rastro técnico** (tabelas, ids) fica só no painel e no log.
+
 ## 2b. Tolerância: nota em trânsito
 
 Uma nota que acabou de ser autorizada pode levar alguns minutos para chegar ao FTP (atraso normal de integração). Para não gerar alarme falso, **uma nota ausente há menos de `TOLERANCIA_MIN` (padrão 20 min) fica "em trânsito"**:

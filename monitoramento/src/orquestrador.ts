@@ -4,6 +4,7 @@ import { conferirLote, depsReais, rodarCiclo, type ResultadoCiclo, type Resultad
 import { canaisDoAmbiente, enviarAviso, type ResultadoEnvio } from "./avisos.js";
 import { registrarEventoAviso } from "./job.js";
 import type { Mensagem } from "./relatorio.js";
+import { deveAvisar, paraChat } from "./resumo.js";
 import type { AppConfig } from "./types.js";
 
 /** off = pausado · sombra = roda sem contingência e sem enviar avisos · ativo = produção. */
@@ -99,9 +100,10 @@ function mensagemFalha(execucao: string, etapa: string, erro: string): Mensagem 
 
 export async function executarCicloCompleto(
   deps: DepsOrquestrador,
-  opcoes: { execucao: string; origem: ResumoRodada["origem"]; sombra: boolean; quem?: string },
+  opcoes: { execucao: string; origem: ResumoRodada["origem"]; sombra: boolean; quem?: string; anterior?: string | null },
 ): Promise<ResumoRodada> {
   const { execucao, origem, sombra, quem } = opcoes;
+  const anterior = opcoes.anterior ?? null;
   const inicio = deps.agora().toISOString();
   let status: ResumoRodada["status"] = "falhou";
   let etapaFalha: string | null = null;
@@ -125,7 +127,8 @@ export async function executarCicloCompleto(
     const ignorarTolerancia = origem === "agenda" && horaSaoPaulo(deps.agora()) >= HORA_ULTIMO_CICLO;
     const r = await deps.ciclo(execucao, { contingencia: !sombra, ignorarTolerancia });
     status = r.status;
-    mensagens = r.mensagens;
+    // mensagem do próprio ciclo (resumo ok / cobertura parcial): só quando muda de estado — sem "100% OK" de hora em hora
+    mensagens = deveAvisar(r.status, anterior) ? r.mensagens : [];
     if (r.lote.length) {
       atual = etapa(`espera do lote (${r.espera})`);
       await esperar(ESPERA_MS[r.espera]);
@@ -150,6 +153,7 @@ export async function executarCicloCompleto(
 
   etapa("envio dos avisos");
   let semEntrega = 0;
+  mensagens = mensagens.map((m) => paraChat(m)); // curto: sem rastro técnico, com link do painel
   for (const m of mensagens) {
     if (sombra) {
       console.log(`▶ [sombra] aviso não enviado: ${m.assunto}`);
@@ -191,7 +195,7 @@ export function dispararCiclo(
   }
   const execucao = `${opcoes.origem}-${deps.agora().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-")}`;
   Object.assign(estado, { emAndamento: true, execucao, etapa: null, aguardandoAte: null });
-  executarCicloCompleto(deps, { ...opcoes, execucao })
+  executarCicloCompleto(deps, { ...opcoes, execucao, anterior: estado.ultimo?.status ?? null })
     .then((r) => {
       estado.ultimo = r;
     })
